@@ -1,0 +1,193 @@
+#!/usr/bin/env node
+
+/**
+ * Generate ranking-data.json — precomputed download-rate ranking data.
+ * Fetches from Ballerina Central, computes per-package download rates,
+ * writes a static JSON file for the Store to consume at build time.
+ */
+
+const fs = require('fs');
+const path = require('path');
+
+const nodeVersion = process.version;
+const majorVersion = parseInt(nodeVersion.slice(1).split('.')[0], 10);
+
+if (majorVersion < 18) {
+  console.error(`Error: Node.js 18 or higher is required (current: ${nodeVersion})`);
+  process.exit(1);
+}
+
+if (typeof fetch === 'undefined') {
+  console.error('Error: fetch is not available. Please use Node.js 18+.');
+  process.exit(1);
+}
+
+const SEARCH_ENDPOINT = 'https://api.central.ballerina.io/2.0/registry/search-packages';
+
+async function fetchAllPackages() {
+  const batchSize = 100;
+  let allPackages = [];
+  let offset = 0;
+  let hasMore = true;
+
+  console.log('Fetching all packages (ballerina + ballerinax)...');
+
+  while (hasMore) {
+    const query = `org:(ballerina OR ballerinax)`;
+    const url = `${SEARCH_ENDPOINT}?offset=${offset}&limit=${batchSize}&q=${encodeURIComponent(query)}`;
+
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`HTTP error at offset ${offset}: ${response.status}`);
+    }
+
+    const data = await response.json();
+    allPackages = [...allPackages, ...data.packages];
+    offset += batchSize;
+
+    console.log(`Fetched ${allPackages.length} of ${data.count}...`);
+
+    hasMore = offset < data.count;
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+
+  console.log(`Total packages fetched: ${allPackages.length}`);
+  return allPackages;
+}
+
+const PACKAGES_ENDPOINT = 'https://api.central.ballerina.io/2.0/registry/packages';
+const MATURITY_MIN_AGE_DAYS = 15;
+// MATURITY_MIN_VERSION_PULLS removed per Danesh's decision -- maturity is
+// age-only now. A fresh version with a lot of early pulls (likely CI/
+// tooling, not organic usage) no longer qualifies as mature just from
+// pull count -- it must wait out the full age window like everything else.
+
+async function fetchVersionDetail(org, name, version) {
+  const url = `${PACKAGES_ENDPOINT}/${org}/${name}/${version}`;
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`HTTP error fetching ${org}/${name}/${version}: ${response.status}`);
+  }
+  const data = await response.json();
+  return { pullCount: data.pullCount, createdDate: data.createdDate };
+}
+
+function computeIsMature(createdDate, minAgeDays) {
+  const ageDays = (Date.now() - createdDate) / 86400000;
+  return ageDays >= minAgeDays;
+}
+
+async function fetchVersionList(org, name) {
+  const url = `${PACKAGES_ENDPOINT}/${org}/${name}`;
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`HTTP error fetching version list for ${org}/${name}: ${response.status}`);
+  }
+  return response.json(); // array of version strings, newest first
+}
+
+const WALK_BACK_LIMIT = 5;
+
+async function resolvePackageRanking(org, name, latestVersion, minAgeDays) {
+  const latestDetail = await fetchVersionDetail(org, name, latestVersion);
+  const latestMature = computeIsMature(latestDetail.createdDate, minAgeDays);
+
+  if (latestMature) {
+    return {
+      selectedVersion: latestVersion,
+      selectedVersionCreatedDate: new Date(latestDetail.createdDate).toISOString(),
+      selectedVersionPullCount: latestDetail.pullCount,
+      ratePerDay: latestDetail.pullCount / Math.max((Date.now() - latestDetail.createdDate) / 86400000, 1),
+      isMature: true,
+    };
+  }
+
+  // Latest isn't mature -- walk backward through version history.
+  const versions = await fetchVersionList(org, name);
+  for (let i = 1; i < Math.min(versions.length, WALK_BACK_LIMIT + 1); i++) {
+    const version = versions[i];
+    const detail = await fetchVersionDetail(org, name, version);
+    if (computeIsMature(detail.createdDate, minAgeDays)) {
+      return {
+        selectedVersion: version,
+        selectedVersionCreatedDate: new Date(detail.createdDate).toISOString(),
+        selectedVersionPullCount: detail.pullCount,
+        ratePerDay: detail.pullCount / Math.max((Date.now() - detail.createdDate) / 86400000, 1),
+        isMature: true,
+      };
+    }
+  }
+
+  // Nothing mature found within the walk-back limit.
+  return {
+    selectedVersion: latestVersion,
+    selectedVersionCreatedDate: new Date(latestDetail.createdDate).toISOString(),
+    selectedVersionPullCount: latestDetail.pullCount,
+    ratePerDay: null,
+    isMature: false,
+  };
+}
+
+const OUTPUT_PATH = path.join(__dirname, '..', 'src', 'ranking-data.json');
+
+async function main() {
+  const packages = await fetchAllPackages();
+  console.log(`Computing rankings for ${packages.length} packages...`);
+
+  const result = {};
+  let processed = 0;
+
+  for (const pkg of packages) {
+    const key = `${pkg.organization}/${pkg.name}`;
+    try {
+      result[key] = await resolvePackageRanking(
+        pkg.organization,
+        pkg.name,
+        pkg.version,
+        MATURITY_MIN_AGE_DAYS
+      );
+    } catch (err) {
+      console.error(`Failed to resolve ${key}: ${err.message}`);
+      throw err; // fail loudly -- do not ship a partial/incomplete file
+    }
+
+    processed++;
+    if (processed % 25 === 0) {
+      console.log(`  ${processed}/${packages.length}...`);
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+
+  const output = {
+    generatedAt: new Date().toISOString(),
+    config: {
+      maturityMinAgeDays: MATURITY_MIN_AGE_DAYS,
+    },
+    packages: result,
+  };
+
+  const newContent = JSON.stringify(output, null, 2);
+
+  let changed = true;
+  if (fs.existsSync(OUTPUT_PATH)) {
+    const existing = fs.readFileSync(OUTPUT_PATH, 'utf8');
+    const existingParsed = JSON.parse(existing);
+    // Compare ignoring generatedAt, since that always differs
+    const existingPackages = JSON.stringify(existingParsed.packages);
+    const newPackages = JSON.stringify(output.packages);
+    changed = existingPackages !== newPackages;
+  }
+
+  if (!changed) {
+    console.log('No ranking changes since last run -- not writing file.');
+    return;
+  }
+
+  fs.writeFileSync(OUTPUT_PATH, newContent, 'utf8');
+  console.log(`Wrote ${OUTPUT_PATH}`);
+  console.log(`${Object.keys(result).length} packages ranked.`);
+}
+
+main();

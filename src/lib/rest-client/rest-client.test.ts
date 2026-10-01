@@ -111,11 +111,18 @@ describe('rest-client', () => {
 
   describe('searchPackages', () => {
     it('should fetch packages with correct parameters', async () => {
-      const mockResponse = createMockApiResponse([{ name: 'test-connector', version: '1.0.0' }], 1);
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve(mockResponse),
-      });
+      // pullCount-desc ("Most Popular") now takes the full-fetch path (see
+      // needsFullFetch in rest-client.ts), since it's ranked using the
+      // precomputed RANKING_DATA lookup, not raw totalPullCount -- two real
+      // calls: a count probe (limit=1), then the real batch fetch.
+      const countResponse = createMockApiResponse([], 1);
+      const batchResponse = createMockApiResponse(
+        [{ name: 'test-connector', version: '1.0.0' }],
+        1
+      );
+      mockFetch
+        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(countResponse) })
+        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(batchResponse) });
 
       const params: SearchParams = {
         offset: 0,
@@ -125,7 +132,7 @@ describe('rest-client', () => {
 
       const result = await searchPackages(params);
 
-      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(mockFetch).toHaveBeenCalledTimes(2);
       expect(result.packages).toHaveLength(1);
       expect(result.packages[0].name).toBe('test-connector');
       expect(result.packages[0].totalPullCount).toBe(1000);
@@ -346,17 +353,18 @@ describe('rest-client', () => {
       HIDDEN_PACKAGES.add('internal-module');
 
       try {
-        const mockResponse = createMockApiResponse(
+        // Same full-fetch reasoning as above -- two calls needed, not one.
+        const countResponse = createMockApiResponse([], 2);
+        const batchResponse = createMockApiResponse(
           [
             { name: 'visible-connector', version: '1.0.0', keywords: ['Type/Connector'] },
             { name: 'internal-module', version: '1.0.0', keywords: [] },
           ],
           2
         );
-        mockFetch.mockResolvedValueOnce({
-          ok: true,
-          json: () => Promise.resolve(mockResponse),
-        });
+        mockFetch
+          .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(countResponse) })
+          .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(batchResponse) });
 
         const result = await searchPackages({ offset: 0, limit: 30, sort: 'pullCount-desc' });
 

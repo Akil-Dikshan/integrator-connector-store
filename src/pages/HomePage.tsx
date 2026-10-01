@@ -285,6 +285,11 @@ export default function HomePage() {
     sortBy,
   ]);
 
+// Bug fix: Prevents a redundant double-fetch on mount. Effect A fetches data 
+// and sets initialLoading=false. This ref flags Effect B to ignore that specific 
+// state change without breaking subsequent fetches (filters, sorting, etc.).
+const skipInitialLoadingFetchRef = useRef(false);
+
   // Load filter options once on mount, then load first page
   useEffect(() => {
     const initialize = async () => {
@@ -302,11 +307,13 @@ export default function HomePage() {
         });
         setFilterOptions(filters);
 
+        skipInitialLoadingFetchRef.current = true;
         setInitialLoading(false);
       } catch (error) {
         console.error('Failed to initialize:', error);
         const errorMessage = error instanceof Error ? error.message : 'Failed to load filters.';
         setError(errorMessage);
+        skipInitialLoadingFetchRef.current = true;
         setInitialLoading(false);
       }
     };
@@ -318,6 +325,10 @@ export default function HomePage() {
   // Trigger server-side fetch when filters/sort/page change (after initial loading)
   useEffect(() => {
     if (!initialLoading) {
+      if (skipInitialLoadingFetchRef.current) {
+        skipInitialLoadingFetchRef.current = false;
+        return;
+      }
       fetchPageData();
     }
   }, [initialLoading, fetchPageData]);
