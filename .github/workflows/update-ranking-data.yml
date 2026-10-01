@@ -1,0 +1,49 @@
+name: Update Ranking Data
+
+on:
+  schedule:
+    # Monthly, 1st of the month, 02:00 UTC -- adjust once Danesh confirms
+    # an exact schedule (still open per the doc).
+    - cron: '0 2 1 * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update-ranking-data:
+    name: Generate ranking-data.json
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run ranking data generator
+        run: node scripts/generate-ranking-data.js
+
+      - name: Create PR if ranking data changed
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: 'chore: update connector ranking data'
+          title: 'Scheduled update: connector ranking data'
+          body: |
+            Automated update from the ranking-data generator (`scripts/generate-ranking-data.js`).
+
+            Generated against live Ballerina Central data. Please review the diff
+            before merging -- this file directly drives "Most Popular" sort order
+            on the Integration Store.
+          branch: automated/update-ranking-data
+          delete-branch: true
+          add-paths: src/ranking-data.json
