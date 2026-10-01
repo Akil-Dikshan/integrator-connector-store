@@ -445,7 +445,10 @@ describe('rest-client', () => {
       // this time returning a real non-zero count, which then triggers the batch
       // fetch -- 3 calls total: failed probe, retried probe (succeeds), batch.
       const countResponse = createMockApiResponse([], 1);
-      const batchResponse = createMockApiResponse([{ name: 'retried-connector', version: '1.0.0' }], 1);
+      const batchResponse = createMockApiResponse(
+        [{ name: 'retried-connector', version: '1.0.0' }],
+        1
+      );
       mockFetch
         .mockRejectedValueOnce(new Error('Network error'))
         .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(countResponse) })

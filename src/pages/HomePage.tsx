@@ -285,10 +285,10 @@ export default function HomePage() {
     sortBy,
   ]);
 
-// Bug fix: Prevents a redundant double-fetch on mount. Effect A fetches data 
-// and sets initialLoading=false. This ref flags Effect B to ignore that specific 
-// state change without breaking subsequent fetches (filters, sorting, etc.).
-const skipInitialLoadingFetchRef = useRef(false);
+  // Bug fix: Prevents a redundant double-fetch on mount. Effect A fetches data
+  // and sets initialLoading=false. This ref flags Effect B to ignore that specific
+  // state change without breaking subsequent fetches (filters, sorting, etc.).
+  const skipInitialLoadingFetchRef = useRef(false);
 
   // Load filter options once on mount, then load first page
   useEffect(() => {

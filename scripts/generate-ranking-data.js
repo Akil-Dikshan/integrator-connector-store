@@ -97,7 +97,8 @@ async function resolvePackageRanking(org, name, latestVersion, minAgeDays) {
       selectedVersion: latestVersion,
       selectedVersionCreatedDate: new Date(latestDetail.createdDate).toISOString(),
       selectedVersionPullCount: latestDetail.pullCount,
-      ratePerDay: latestDetail.pullCount / Math.max((Date.now() - latestDetail.createdDate) / 86400000, 1),
+      ratePerDay:
+        latestDetail.pullCount / Math.max((Date.now() - latestDetail.createdDate) / 86400000, 1),
       isMature: true,
     };
   }
