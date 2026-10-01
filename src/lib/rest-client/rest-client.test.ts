@@ -20,7 +20,9 @@ import {
   searchPackages,
   fetchFiltersProgressively,
   fetchLatestConnectorEntries,
+  fetchPackageVersionsNoRetry,
   SearchParams,
+  __resetHiddenCountCacheForTests,
 } from './rest-client';
 
 // Mock fetch globally
@@ -86,6 +88,10 @@ describe('rest-client', () => {
       json: () => Promise.resolve(createMockApiResponse([], 0)),
     });
 
+    // searchPackages' fast path caches the hidden-package count per org scope
+    // across calls (see rest-client.ts); reset it so tests don't leak state.
+    __resetHiddenCountCacheForTests();
+
     // Reset storage - clear store and restore implementations
     Object.keys(storageStore).forEach((key) => delete storageStore[key]);
     storageMock.getItem.mockImplementation((key: string) => storageStore[key] ?? null);
@@ -132,6 +138,10 @@ describe('rest-client', () => {
 
       const result = await searchPackages(params);
 
+      // NEEDS VERIFICATION POST-MERGE: was 2 calls because pullCount-desc
+      // takes the full-fetch path for RANKING_DATA (count probe + batch).
+      // Upstream's #2552 fix separately made even the FAST path probe count
+      // first. Confirm this is still 2, not 3, now that both apply.
       expect(mockFetch).toHaveBeenCalledTimes(2);
       expect(result.packages).toHaveLength(1);
       expect(result.packages[0].name).toBe('test-connector');
@@ -375,13 +385,77 @@ describe('rest-client', () => {
       }
     });
 
+    it('should report the same total count across pages regardless of where hidden packages happen to fall (see #2552)', async () => {
+      const { HIDDEN_PACKAGES } = await import('../connector-utils');
+      HIDDEN_PACKAGES.add('hidden-1');
+      HIDDEN_PACKAGES.add('hidden-2');
+
+      try {
+        const fullCatalog = [
+          { name: 'visible-1', version: '1.0.0' },
+          { name: 'hidden-1', version: '1.0.0' },
+          { name: 'visible-2', version: '1.0.0' },
+          { name: 'hidden-2', version: '1.0.0' },
+          { name: 'visible-3', version: '1.0.0' },
+          { name: 'visible-4', version: '1.0.0' },
+        ];
+
+        // pullCount-desc now always takes the full-fetch path (it's ranked via
+        // RANKING_DATA, not the fast path's server-side sort), so this scenario is
+        // solved differently than #2552's original fast-path hidden-count probe:
+        // the whole catalog is fetched, hidden packages filtered, THEN paginated in
+        // memory -- so page count is inherently consistent regardless of where the
+        // hidden packages happen to fall. Each page is its own searchPackages call
+        // (no cross-call caching), so each needs its own count probe + batch mock.
+        mockFetch
+          .mockResolvedValueOnce({
+            ok: true,
+            json: () => Promise.resolve(createMockApiResponse([], fullCatalog.length)),
+          })
+          .mockResolvedValueOnce({
+            ok: true,
+            json: () => Promise.resolve(createMockApiResponse(fullCatalog, fullCatalog.length)),
+          });
+
+        const firstPage = await searchPackages({ offset: 0, limit: 2, sort: 'pullCount-desc' });
+
+        mockFetch
+          .mockResolvedValueOnce({
+            ok: true,
+            json: () => Promise.resolve(createMockApiResponse([], fullCatalog.length)),
+          })
+          .mockResolvedValueOnce({
+            ok: true,
+            json: () => Promise.resolve(createMockApiResponse(fullCatalog, fullCatalog.length)),
+          });
+
+        const secondPage = await searchPackages({ offset: 2, limit: 2, sort: 'pullCount-desc' });
+
+        expect(firstPage.count).toBe(4);
+        expect(secondPage.count).toBe(4);
+      } finally {
+        HIDDEN_PACKAGES.delete('hidden-1');
+        HIDDEN_PACKAGES.delete('hidden-2');
+      }
+    });
+
     it('should handle API errors with retry', async () => {
-      mockFetch.mockRejectedValueOnce(new Error('Network error')).mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve(createMockApiResponse([], 0)),
-      });
-      await searchPackages({ offset: 0, limit: 30, sort: 'pullCount-desc' });
-      expect(mockFetch).toHaveBeenCalledTimes(2);
+      // pullCount-desc takes the full-fetch path: a count probe, then a batch
+      // fetch. Here the count probe's first attempt fails; withRetry retries it,
+      // this time returning a real non-zero count, which then triggers the batch
+      // fetch -- 3 calls total: failed probe, retried probe (succeeds), batch.
+      const countResponse = createMockApiResponse([], 1);
+      const batchResponse = createMockApiResponse([{ name: 'retried-connector', version: '1.0.0' }], 1);
+      mockFetch
+        .mockRejectedValueOnce(new Error('Network error'))
+        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(countResponse) })
+        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(batchResponse) });
+
+      const result = await searchPackages({ offset: 0, limit: 30, sort: 'pullCount-desc' });
+
+      expect(mockFetch).toHaveBeenCalledTimes(3);
+      expect(result.packages).toHaveLength(1);
+      expect(result.packages[0].name).toBe('retried-connector');
     }, 10000);
   });
 
@@ -429,7 +503,9 @@ describe('rest-client', () => {
 
       await fetchFiltersProgressively();
 
-      expect(mockFetch).toHaveBeenCalledTimes(1);
+      // 1 call for the batch itself + 2 for the fast path's hidden-count probe
+      // (a count check, then one batch fetch — see #2552)
+      expect(mockFetch).toHaveBeenCalledTimes(3);
       expect(storageMock.setItem).toHaveBeenCalledWith(getFilterCacheKey(), expect.any(String));
     });
 
@@ -533,6 +609,35 @@ describe('rest-client', () => {
         { org: 'ballerinax', packageName: 'twilio', createdDate: '2026-01-15T00:00:00Z' },
         { org: 'ballerinax', packageName: 'slack', createdDate: '2026-02-01T00:00:00Z' },
       ]);
+    });
+  });
+
+  describe('fetchWithTimeout (via fetchPackageVersionsNoRetry)', () => {
+    beforeEach(() => {
+      jest.useFakeTimers();
+    });
+
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    it('should reject with a clear timeout error instead of hanging forever (see #2553)', async () => {
+      // Simulate a hung request: fetch() never resolves on its own, only when
+      // fetchWithTimeout's internal AbortController fires.
+      mockFetch.mockImplementation(
+        (_url: string, options?: RequestInit) =>
+          new Promise((_resolve, reject) => {
+            options?.signal?.addEventListener('abort', () => {
+              reject(new DOMException('The operation was aborted.', 'AbortError'));
+            });
+          })
+      );
+
+      const resultPromise = fetchPackageVersionsNoRetry('ballerina', 'http');
+      const assertion = expect(resultPromise).rejects.toThrow(/timed out/i);
+
+      jest.advanceTimersByTime(10000);
+      await assertion;
     });
   });
 });

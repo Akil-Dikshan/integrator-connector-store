@@ -134,6 +134,39 @@ async function withRetry<T>(
 }
 
 /**
+ * Default timeout for a single fetch attempt on the connector detail page's
+ * dependencies. Without this, a slow upstream response (observed at 15-20s+
+ * for some packages, vs ~3-5s for others) left the page on a bare spinner
+ * indefinitely, with no way to ever reach an error state — see
+ * https://github.com/wso2/product-integrator/issues/2553. This bounds each
+ * attempt so withRetry's existing retry/backoff logic still applies on top.
+ */
+const DETAIL_FETCH_TIMEOUT_MS = 10000;
+
+/**
+ * fetch() with a hard timeout, so a slow/hanging dependency rejects with a
+ * clear error instead of leaving the caller waiting indefinitely.
+ */
+async function fetchWithTimeout(
+  url: string,
+  options: RequestInit = {},
+  timeoutMs: number = DETAIL_FETCH_TIMEOUT_MS
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error(`Request timed out after ${timeoutMs / 1000}s while fetching ${url}`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+/**
  * Convert sort option to REST API sort parameter
  * @example "pullCount-desc" → "pullCount,DESC"
  */
@@ -549,6 +582,37 @@ async function fetchAllForCombination(combo: SearchParams): Promise<BallerinaPac
 }
 
 /**
+ * Exact hidden-package count per org scope, computed once by fetching the full
+ * unfiltered catalog and cached for the session (in-flight promises are cached
+ * too, so concurrent page loads share one fetch). The fast path in searchPackages
+ * below used to estimate this proportionally from each page's own local sample,
+ * which gave a different (and visibly inconsistent) total depending on which page
+ * happened to be requested — see https://github.com/wso2/product-integrator/issues/2552.
+ */
+const hiddenCountCache = new Map<string, Promise<number>>();
+
+/** Test-only: clears the in-memory hidden-count cache so test cases don't leak state. */
+export function __resetHiddenCountCacheForTests(): void {
+  hiddenCountCache.clear();
+}
+
+async function getTotalHiddenCount(orgName?: string): Promise<number> {
+  const cacheKey = orgName ?? 'all';
+  const cached = hiddenCountCache.get(cacheKey);
+  if (cached) return cached;
+
+  const promise = fetchAllForCombination({
+    orgName,
+    offset: 0,
+    limit: 1,
+    sort: 'pullCount-desc',
+  }).then((packages) => packages.filter((pkg) => HIDDEN_PACKAGES.has(pkg.name)).length);
+
+  hiddenCountCache.set(cacheKey, promise);
+  return promise;
+}
+
+/**
  * Search packages with server-side filtering, sorting, and pagination.
  * Handles OR logic across multi-select filters by making multiple API calls.
  */
@@ -611,19 +675,14 @@ export async function searchPackages(params: SearchParams): Promise<SearchRespon
   // set, so a fixed overfetch buffer is safe and server-side pagination can stay fast.
   const buffer = HIDDEN_PACKAGES.size;
   const fetchLimit = params.limit + buffer;
-  const result = await executeSingleSearch({
-    ...combinations[0],
-    limit: fetchLimit,
-  });
-  const beforeCount = result.packages.length;
+  const [result, totalHidden] = await Promise.all([
+    executeSingleSearch({
+      ...combinations[0],
+      limit: fetchLimit,
+    }),
+    getTotalHiddenCount(params.orgName),
+  ]);
   result.packages = excludeHidden(result.packages);
-  const hiddenInPage = beforeCount - result.packages.length;
-  // If we fetched all results, we know the exact hidden count.
-  // Otherwise, estimate proportionally from the page sample.
-  const totalHidden =
-    beforeCount === 0 || result.count <= fetchLimit
-      ? hiddenInPage
-      : Math.round((hiddenInPage / beforeCount) * result.count);
   result.count = Math.max(0, result.count - totalHidden);
   result.packages = result.packages.slice(0, params.limit);
   result.packages = sortMergedPackages(result.packages, params.sort, params.query);
@@ -836,7 +895,7 @@ export async function fetchPackageVersionsNoRetry(
   orgName: string,
   packageName: string
 ): Promise<string[]> {
-  const response = await fetch(`${PACKAGES_ENDPOINT}/${orgName}/${packageName}`);
+  const response = await fetchWithTimeout(`${PACKAGES_ENDPOINT}/${orgName}/${packageName}`);
   if (!response.ok) {
     throw new Error(`HTTP error! status: ${response.status}`);
   }
@@ -897,7 +956,9 @@ export async function fetchPackageDetails(
       targetVersion = sanitized[0].raw; // Use the original/raw version string
     }
 
-    const response = await fetch(`${PACKAGES_ENDPOINT}/${orgName}/${packageName}/${targetVersion}`);
+    const response = await fetchWithTimeout(
+      `${PACKAGES_ENDPOINT}/${orgName}/${packageName}/${targetVersion}`
+    );
 
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`);
@@ -920,7 +981,7 @@ export async function fetchPackageDetails(
         `,
       };
 
-      const graphqlResponse = await fetch(GRAPHQL_ENDPOINT, {
+      const graphqlResponse = await fetchWithTimeout(GRAPHQL_ENDPOINT, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
