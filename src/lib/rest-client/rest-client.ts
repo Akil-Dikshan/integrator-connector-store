@@ -24,6 +24,21 @@ import {
   HIDDEN_PACKAGES,
 } from '../connector-utils';
 import semver from 'semver';
+import rankingData from '../../ranking-data.json';
+
+// Shape of each entry in ranking-data.json (see scripts/generate-ranking-data.js).
+// Precomputed, build-time download-rate ranking -- see that script for the full
+// maturity/fallback logic. This file is consumed read-only here; nothing in the
+// Store recomputes or re-derives these values at runtime.
+interface RankingEntry {
+  selectedVersion: string;
+  selectedVersionCreatedDate: string;
+  selectedVersionPullCount: number;
+  ratePerDay: number | null;
+  isMature: boolean;
+}
+
+const RANKING_DATA: Record<string, RankingEntry> = rankingData.packages;
 
 const REST_ENDPOINT = 'https://api.central.ballerina.io/2.0/registry/search-packages';
 const PACKAGES_ENDPOINT = 'https://api.central.ballerina.io/2.0/registry/packages';
@@ -184,17 +199,35 @@ function sortMergedPackages(
           getDisplayName(a.name, vendorA, a.keywords)
         );
       });
-    case 'pullCount-desc':
+    case 'pullCount-desc': {
+      // "Most Popular" now uses precomputed download-rate data (see
+      // scripts/generate-ranking-data.js and RANKING_DATA above), not raw
+      // totalPullCount. The rate spread is extreme (orders of magnitude), so
+      // we log-transform before comparing -- same reasoning as the lifetime-
+      // pullCount skew this replaces. Packages with no entry in RANKING_DATA,
+      // or a null ratePerDay (never reached maturity -- see the script for
+      // the exact rule), sort to the bottom, in no particular order among
+      // themselves (confirmed acceptable).
+      const getRateScore = (pkg: BallerinaPackage): number => {
+        const identity = extractConnectorIdentity(pkg);
+        if (!identity) return -Infinity;
+        const entry = RANKING_DATA[`${identity.org}/${identity.packageName}`];
+        if (!entry || entry.ratePerDay === null) return -Infinity;
+        return Math.log10(entry.ratePerDay + 1);
+      };
+
       if (query) {
-        // When searching, sort by name relevance first, then by pull count within same relevance
+        // When searching, sort by name relevance first, then by rate score
+        // within the same relevance group.
         return sorted.sort((a, b) => {
           const scoreA = nameRelevanceScore(a, query);
           const scoreB = nameRelevanceScore(b, query);
           if (scoreA !== scoreB) return scoreA - scoreB;
-          return (b.totalPullCount || 0) - (a.totalPullCount || 0);
+          return getRateScore(b) - getRateScore(a);
         });
       }
-      return sorted.sort((a, b) => (b.totalPullCount || 0) - (a.totalPullCount || 0));
+      return sorted.sort((a, b) => getRateScore(b) - getRateScore(a));
+    }
     case 'pullCount-asc':
       return sorted.sort((a, b) => (a.totalPullCount || 0) - (b.totalPullCount || 0));
     case 'date-desc':
@@ -533,10 +566,16 @@ export async function searchPackages(params: SearchParams): Promise<SearchRespon
   // filterByExactKeywords). All three require the complete result set up front: the API's
   // own count/offset can't be trusted to reflect what the result looks like after that
   // client-side filtering, so a fixed overfetch buffer can't be sized correctly either.
+  // pullCount-desc ("Most Popular") also needs the complete result set: it's
+  // ranked using RANKING_DATA (see above), a precomputed download-rate lookup
+  // covering the whole catalog -- correctly ranking it requires comparing every
+  // matching package against each other, not just whatever one page Central's
+  // own API-side sort would have returned first.
   const needsFullFetch =
     !!params.query ||
     params.sort === 'name-asc' ||
     params.sort === 'name-desc' ||
+    params.sort === 'pullCount-desc' ||
     hasKeywordFilters;
 
   if (needsFullFetch) {
