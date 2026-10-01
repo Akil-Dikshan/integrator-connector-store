@@ -2,8 +2,7 @@ name: Update Ranking Data
 
 on:
   schedule:
-    # Monthly, 1st of the month, 02:00 UTC -- adjust once Danesh confirms
-    # an exact schedule (still open per the doc).
+    # Monthly, 1st of the month, 02:00 UTC.
     - cron: '0 2 1 * *'
   workflow_dispatch: {}
 
@@ -39,11 +38,11 @@ jobs:
           commit-message: 'chore: update connector ranking data'
           title: 'Scheduled update: connector ranking data'
           body: |
-            Automated update from the ranking-data generator (`scripts/generate-ranking-data.js`).
+            Automated update to the connector ranking data, generated from live
+            Ballerina Central data.
 
-            Generated against live Ballerina Central data. Please review the diff
-            before merging -- this file directly drives "Most Popular" sort order
-            on the Integration Store.
+            Please review the diff before merging -- this file directly drives
+            "Most Popular" sort order on the Integration Store.
           branch: automated/update-ranking-data
           delete-branch: true
           add-paths: src/ranking-data.json
