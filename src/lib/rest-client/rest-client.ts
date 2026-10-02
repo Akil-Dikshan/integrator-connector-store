@@ -24,7 +24,6 @@ import {
   HIDDEN_PACKAGES,
 } from '../connector-utils';
 import semver from 'semver';
-import rankingData from '../../ranking-data.json';
 
 // Shape of each entry in ranking-data.json (see scripts/generate-ranking-data.js).
 // Precomputed, build-time download-rate ranking -- see that script for the full
@@ -38,7 +37,45 @@ interface RankingEntry {
   isMature: boolean;
 }
 
-const RANKING_DATA: Record<string, RankingEntry> = rankingData.packages;
+// Served from public/ranking-data.json so other tools can fetch it directly
+// too, not just this app. Fetched once per page session and cached here --
+// a failed fetch falls back to an empty object rather than breaking search.
+let rankingDataCache: Record<string, RankingEntry> | null = null;
+let rankingDataFetchPromise: Promise<Record<string, RankingEntry>> | null = null;
+
+/** Test-only: clears the in-memory ranking-data cache so test cases don't leak state. */
+export function __resetRankingDataCacheForTests(): void {
+  rankingDataCache = null;
+  rankingDataFetchPromise = null;
+}
+
+async function loadRankingData(): Promise<Record<string, RankingEntry>> {
+  if (rankingDataCache) {
+    return rankingDataCache;
+  }
+  if (!rankingDataFetchPromise) {
+    rankingDataFetchPromise = (async () => {
+      try {
+        const response = await fetch('/ranking-data.json');
+        if (!response.ok) {
+          throw new Error(`Failed to fetch ranking data: ${response.status}`);
+        }
+        const data = await response.json();
+        const parsed: Record<string, RankingEntry> = data.packages || {};
+        rankingDataCache = parsed;
+        return parsed;
+      } catch (error) {
+        console.warn('Failed to load ranking data, falling back to unranked order:', error);
+        const empty: Record<string, RankingEntry> = {};
+        rankingDataCache = empty;
+        return empty;
+      } finally {
+        rankingDataFetchPromise = null;
+      }
+    })();
+  }
+  return rankingDataFetchPromise;
+}
 
 const REST_ENDPOINT = 'https://api.central.ballerina.io/2.0/registry/search-packages';
 const PACKAGES_ENDPOINT = 'https://api.central.ballerina.io/2.0/registry/packages';
@@ -211,7 +248,8 @@ function nameRelevanceScore(pkg: BallerinaPackage, query: string): number {
 function sortMergedPackages(
   packages: BallerinaPackage[],
   sort: SortOption,
-  query?: string
+  query?: string,
+  rankingData: Record<string, RankingEntry> = {}
 ): BallerinaPackage[] {
   const sorted = [...packages];
 
@@ -244,7 +282,7 @@ function sortMergedPackages(
       const getRateScore = (pkg: BallerinaPackage): number => {
         const identity = extractConnectorIdentity(pkg);
         if (!identity) return 0;
-        const entry = RANKING_DATA[`${identity.org}/${identity.packageName}`];
+        const entry = rankingData[`${identity.org}/${identity.packageName}`];
         if (!entry || entry.ratePerDay === null) return 0;
         return Math.log10(entry.ratePerDay + 1);
       };
@@ -660,7 +698,10 @@ export async function searchPackages(params: SearchParams): Promise<SearchRespon
     const visible = excludeHidden(merged);
     const exactMatches = filterByExactKeywords(visible, params);
     const filtered = filterByRelevance(exactMatches, params.query);
-    const sorted = sortMergedPackages(filtered, params.sort, params.query);
+    // Only pullCount-desc actually reads ranking data -- skip the fetch
+    // entirely for every other sort to avoid an unnecessary network request.
+    const rankingData = params.sort === 'pullCount-desc' ? await loadRankingData() : {};
+    const sorted = sortMergedPackages(filtered, params.sort, params.query, rankingData);
     const paged = sorted.slice(params.offset, params.offset + params.limit);
     return {
       packages: paged,
@@ -685,7 +726,10 @@ export async function searchPackages(params: SearchParams): Promise<SearchRespon
   result.packages = excludeHidden(result.packages);
   result.count = Math.max(0, result.count - totalHidden);
   result.packages = result.packages.slice(0, params.limit);
-  result.packages = sortMergedPackages(result.packages, params.sort, params.query);
+  // Only pullCount-desc actually reads ranking data -- skip the fetch
+  // entirely for every other sort to avoid an unnecessary network request.
+  const rankingData = params.sort === 'pullCount-desc' ? await loadRankingData() : {};
+  result.packages = sortMergedPackages(result.packages, params.sort, params.query, rankingData);
   result.limit = params.limit;
   return result;
 }

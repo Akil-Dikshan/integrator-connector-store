@@ -92,7 +92,9 @@ async function fetchVersionList(org, name) {
   const response = await fetch(url);
   if (!response.ok) {
     const body = await readErrorBody(response);
-    throw new Error(`HTTP error fetching version list for ${org}/${name}: ${response.status}${body}`);
+    throw new Error(
+      `HTTP error fetching version list for ${org}/${name}: ${response.status}${body}`
+    );
   }
   return response.json(); // array of version strings, newest first
 }
@@ -140,7 +142,7 @@ async function resolvePackageRanking(org, name, latestVersion, minAgeDays) {
   };
 }
 
-const OUTPUT_PATH = path.join(__dirname, '..', 'src', 'ranking-data.json');
+const OUTPUT_PATH = path.join(__dirname, '..', 'public', 'ranking-data.json');
 
 async function main() {
   const packages = await fetchAllPackages();

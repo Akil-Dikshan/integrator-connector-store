@@ -23,6 +23,7 @@ import {
   fetchPackageVersionsNoRetry,
   SearchParams,
   __resetHiddenCountCacheForTests,
+  __resetRankingDataCacheForTests,
 } from './rest-client';
 
 // Mock fetch globally
@@ -92,6 +93,11 @@ describe('rest-client', () => {
     // across calls (see rest-client.ts); reset it so tests don't leak state.
     __resetHiddenCountCacheForTests();
 
+    // pullCount-desc fetches and caches ranking data per module (see
+    // rest-client.ts); reset it so each test's fetch-call-count assertions
+    // stay accurate and independent of test order.
+    __resetRankingDataCacheForTests();
+
     // Reset storage - clear store and restore implementations
     Object.keys(storageStore).forEach((key) => delete storageStore[key]);
     storageMock.getItem.mockImplementation((key: string) => storageStore[key] ?? null);
@@ -128,7 +134,8 @@ describe('rest-client', () => {
       );
       mockFetch
         .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(countResponse) })
-        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(batchResponse) });
+        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(batchResponse) })
+        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ packages: {} }) });
 
       const params: SearchParams = {
         offset: 0,
@@ -138,11 +145,9 @@ describe('rest-client', () => {
 
       const result = await searchPackages(params);
 
-      // NEEDS VERIFICATION POST-MERGE: was 2 calls because pullCount-desc
-      // takes the full-fetch path for RANKING_DATA (count probe + batch).
-      // Upstream's #2552 fix separately made even the FAST path probe count
-      // first. Confirm this is still 2, not 3, now that both apply.
-      expect(mockFetch).toHaveBeenCalledTimes(2);
+      // pullCount-desc takes the full-fetch path (count probe + batch), plus
+      // a third call to fetch ranking-data.json for scoring -- 3 calls total.
+      expect(mockFetch).toHaveBeenCalledTimes(3);
       expect(result.packages).toHaveLength(1);
       expect(result.packages[0].name).toBe('test-connector');
       expect(result.packages[0].totalPullCount).toBe(1000);
@@ -353,9 +358,10 @@ describe('rest-client', () => {
         limit: 30,
         sort: 'pullCount-desc',
       });
-      // Each of the 2 area combinations now fetches its complete result set
-      // (a count check, then a batch fetch) rather than one offset-limited page.
-      expect(mockFetch).toHaveBeenCalledTimes(4);
+      // Each of the 2 area combinations fetches its complete result set (a
+      // count check, then a batch fetch), plus one shared ranking-data fetch
+      // for scoring -- 5 calls total.
+      expect(mockFetch).toHaveBeenCalledTimes(5);
     });
 
     it('should exclude hidden packages from results', async () => {
@@ -441,9 +447,9 @@ describe('rest-client', () => {
 
     it('should handle API errors with retry', async () => {
       // pullCount-desc takes the full-fetch path: a count probe, then a batch
-      // fetch. Here the count probe's first attempt fails; withRetry retries it,
-      // this time returning a real non-zero count, which then triggers the batch
-      // fetch -- 3 calls total: failed probe, retried probe (succeeds), batch.
+      // fetch, then a ranking-data fetch for scoring. Here the count probe's
+      // first attempt fails and retries successfully -- 4 calls total: failed
+      // probe, retry, batch, ranking data.
       const countResponse = createMockApiResponse([], 1);
       const batchResponse = createMockApiResponse(
         [{ name: 'retried-connector', version: '1.0.0' }],
@@ -452,11 +458,12 @@ describe('rest-client', () => {
       mockFetch
         .mockRejectedValueOnce(new Error('Network error'))
         .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(countResponse) })
-        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(batchResponse) });
+        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(batchResponse) })
+        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ packages: {} }) });
 
       const result = await searchPackages({ offset: 0, limit: 30, sort: 'pullCount-desc' });
 
-      expect(mockFetch).toHaveBeenCalledTimes(3);
+      expect(mockFetch).toHaveBeenCalledTimes(4);
       expect(result.packages).toHaveLength(1);
       expect(result.packages[0].name).toBe('retried-connector');
     }, 10000);
