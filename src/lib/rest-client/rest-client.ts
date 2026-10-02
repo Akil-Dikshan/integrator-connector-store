@@ -243,9 +243,9 @@ function sortMergedPackages(
       // themselves (confirmed acceptable).
       const getRateScore = (pkg: BallerinaPackage): number => {
         const identity = extractConnectorIdentity(pkg);
-        if (!identity) return -Infinity;
+        if (!identity) return 0;
         const entry = RANKING_DATA[`${identity.org}/${identity.packageName}`];
-        if (!entry || entry.ratePerDay === null) return -Infinity;
+        if (!entry || entry.ratePerDay === null) return 0;
         return Math.log10(entry.ratePerDay + 1);
       };
 

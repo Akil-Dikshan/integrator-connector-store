@@ -30,7 +30,7 @@ async function fetchAllPackages() {
   let offset = 0;
   let hasMore = true;
 
-  console.log('Fetching all packages (ballerina + ballerinax)...');
+  console.log('Fetching all packages (ballerina + ballerinax)');
 
   while (hasMore) {
     const query = `org:(ballerina OR ballerinax)`;
@@ -58,15 +58,25 @@ async function fetchAllPackages() {
 
 const PACKAGES_ENDPOINT = 'https://api.central.ballerina.io/2.0/registry/packages';
 const MATURITY_MIN_AGE_DAYS = 15;
-// Maturity is based on version age only. A fresh version with a lot of
-// early pulls (likely CI/tooling activity, not organic usage) still has
-// to wait out the full age window before it's treated as mature.
+// Maturity is based on version age only.
+
+// Reads the response body for a more useful error message. Best-effort --
+// never throws itself, falls back to an empty string on failure.
+async function readErrorBody(response) {
+  try {
+    const text = await response.text();
+    return text ? `: ${text}` : '';
+  } catch {
+    return '';
+  }
+}
 
 async function fetchVersionDetail(org, name, version) {
   const url = `${PACKAGES_ENDPOINT}/${org}/${name}/${version}`;
   const response = await fetch(url);
   if (!response.ok) {
-    throw new Error(`HTTP error fetching ${org}/${name}/${version}: ${response.status}`);
+    const body = await readErrorBody(response);
+    throw new Error(`HTTP error fetching ${org}/${name}/${version}: ${response.status}${body}`);
   }
   const data = await response.json();
   return { pullCount: data.pullCount, createdDate: data.createdDate };
@@ -81,7 +91,8 @@ async function fetchVersionList(org, name) {
   const url = `${PACKAGES_ENDPOINT}/${org}/${name}`;
   const response = await fetch(url);
   if (!response.ok) {
-    throw new Error(`HTTP error fetching version list for ${org}/${name}: ${response.status}`);
+    const body = await readErrorBody(response);
+    throw new Error(`HTTP error fetching version list for ${org}/${name}: ${response.status}${body}`);
   }
   return response.json(); // array of version strings, newest first
 }
@@ -160,12 +171,18 @@ async function main() {
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
 
+  // Sort alphabetically so diffs stay small across runs.
+  const sortedResult = {};
+  for (const key of Object.keys(result).sort()) {
+    sortedResult[key] = result[key];
+  }
+
   const output = {
     generatedAt: new Date().toISOString(),
     config: {
       maturityMinAgeDays: MATURITY_MIN_AGE_DAYS,
     },
-    packages: result,
+    packages: sortedResult,
   };
 
   const newContent = JSON.stringify(output, null, 2);
