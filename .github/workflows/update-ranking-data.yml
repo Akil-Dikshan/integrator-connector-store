@@ -45,4 +45,4 @@ jobs:
             "Most Popular" sort order on the Integration Store.
           branch: automated/update-ranking-data
           delete-branch: true
-          add-paths: src/ranking-data.json
+          add-paths: public/ranking-data.json
