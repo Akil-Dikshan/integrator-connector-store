@@ -23,6 +23,7 @@ import {
   fetchPackageVersionsNoRetry,
   SearchParams,
   __resetHiddenCountCacheForTests,
+  __resetRankingDataCacheForTests,
 } from './rest-client';
 
 // Mock fetch globally
@@ -92,6 +93,11 @@ describe('rest-client', () => {
     // across calls (see rest-client.ts); reset it so tests don't leak state.
     __resetHiddenCountCacheForTests();
 
+    // pullCount-desc fetches and caches ranking data per module (see
+    // rest-client.ts); reset it so each test's fetch-call-count assertions
+    // stay accurate and independent of test order.
+    __resetRankingDataCacheForTests();
+
     // Reset storage - clear store and restore implementations
     Object.keys(storageStore).forEach((key) => delete storageStore[key]);
     storageMock.getItem.mockImplementation((key: string) => storageStore[key] ?? null);
@@ -117,11 +123,19 @@ describe('rest-client', () => {
 
   describe('searchPackages', () => {
     it('should fetch packages with correct parameters', async () => {
-      const mockResponse = createMockApiResponse([{ name: 'test-connector', version: '1.0.0' }], 1);
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve(mockResponse),
-      });
+      // pullCount-desc ("Most Popular") now takes the full-fetch path (see
+      // needsFullFetch in rest-client.ts), since it's ranked using the
+      // precomputed RANKING_DATA lookup, not raw totalPullCount -- two real
+      // calls: a count probe (limit=1), then the real batch fetch.
+      const countResponse = createMockApiResponse([], 1);
+      const batchResponse = createMockApiResponse(
+        [{ name: 'test-connector', version: '1.0.0' }],
+        1
+      );
+      mockFetch
+        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(countResponse) })
+        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(batchResponse) })
+        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ packages: {} }) });
 
       const params: SearchParams = {
         offset: 0,
@@ -131,8 +145,9 @@ describe('rest-client', () => {
 
       const result = await searchPackages(params);
 
-      // 1 call for the page itself + 1 for the fast path's hidden-count probe (see #2552)
-      expect(mockFetch).toHaveBeenCalledTimes(2);
+      // pullCount-desc takes the full-fetch path (count probe + batch), plus
+      // a third call to fetch ranking-data.json for scoring -- 3 calls total.
+      expect(mockFetch).toHaveBeenCalledTimes(3);
       expect(result.packages).toHaveLength(1);
       expect(result.packages[0].name).toBe('test-connector');
       expect(result.packages[0].totalPullCount).toBe(1000);
@@ -343,9 +358,10 @@ describe('rest-client', () => {
         limit: 30,
         sort: 'pullCount-desc',
       });
-      // Each of the 2 area combinations now fetches its complete result set
-      // (a count check, then a batch fetch) rather than one offset-limited page.
-      expect(mockFetch).toHaveBeenCalledTimes(4);
+      // Each of the 2 area combinations fetches its complete result set (a
+      // count check, then a batch fetch), plus one shared ranking-data fetch
+      // for scoring -- 5 calls total.
+      expect(mockFetch).toHaveBeenCalledTimes(5);
     });
 
     it('should exclude hidden packages from results', async () => {
@@ -353,17 +369,18 @@ describe('rest-client', () => {
       HIDDEN_PACKAGES.add('internal-module');
 
       try {
-        const mockResponse = createMockApiResponse(
+        // Same full-fetch reasoning as above -- two calls needed, not one.
+        const countResponse = createMockApiResponse([], 2);
+        const batchResponse = createMockApiResponse(
           [
             { name: 'visible-connector', version: '1.0.0', keywords: ['Type/Connector'] },
             { name: 'internal-module', version: '1.0.0', keywords: [] },
           ],
           2
         );
-        mockFetch.mockResolvedValueOnce({
-          ok: true,
-          json: () => Promise.resolve(mockResponse),
-        });
+        mockFetch
+          .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(countResponse) })
+          .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(batchResponse) });
 
         const result = await searchPackages({ offset: 0, limit: 30, sort: 'pullCount-desc' });
 
@@ -389,21 +406,17 @@ describe('rest-client', () => {
           { name: 'visible-4', version: '1.0.0' },
         ];
 
-        // Page 1's own fetched window happens to contain both hidden packages — the
-        // scenario that broke the old per-page proportional estimate. The fast path
-        // fires this main-page fetch first, then the hidden-count probe (a count
-        // check, then one batch fetch of the full catalog), so the mocks are queued
-        // in that order.
+        // pullCount-desc now always takes the full-fetch path (it's ranked via
+        // RANKING_DATA, not the fast path's server-side sort), so this scenario is
+        // solved differently than #2552's original fast-path hidden-count probe:
+        // the whole catalog is fetched, hidden packages filtered, THEN paginated in
+        // memory -- so page count is inherently consistent regardless of where the
+        // hidden packages happen to fall. Each page is its own searchPackages call
+        // (no cross-call caching), so each needs its own count probe + batch mock.
         mockFetch
           .mockResolvedValueOnce({
             ok: true,
-            json: () =>
-              Promise.resolve(createMockApiResponse(fullCatalog.slice(0, 2), fullCatalog.length)),
-          })
-          .mockResolvedValueOnce({
-            ok: true,
-            json: () =>
-              Promise.resolve(createMockApiResponse([fullCatalog[0]], fullCatalog.length)),
+            json: () => Promise.resolve(createMockApiResponse([], fullCatalog.length)),
           })
           .mockResolvedValueOnce({
             ok: true,
@@ -412,14 +425,15 @@ describe('rest-client', () => {
 
         const firstPage = await searchPackages({ offset: 0, limit: 2, sort: 'pullCount-desc' });
 
-        // Page 2's window contains no hidden packages at all — under the old estimate
-        // this alone would have produced a different total than page 1. The hidden
-        // count is now cached from page 1, so this only needs one more mock call.
-        mockFetch.mockResolvedValueOnce({
-          ok: true,
-          json: () =>
-            Promise.resolve(createMockApiResponse(fullCatalog.slice(4, 6), fullCatalog.length)),
-        });
+        mockFetch
+          .mockResolvedValueOnce({
+            ok: true,
+            json: () => Promise.resolve(createMockApiResponse([], fullCatalog.length)),
+          })
+          .mockResolvedValueOnce({
+            ok: true,
+            json: () => Promise.resolve(createMockApiResponse(fullCatalog, fullCatalog.length)),
+          });
 
         const secondPage = await searchPackages({ offset: 2, limit: 2, sort: 'pullCount-desc' });
 
@@ -432,12 +446,26 @@ describe('rest-client', () => {
     });
 
     it('should handle API errors with retry', async () => {
-      // Only the very first call (the main page fetch's first attempt) fails; its
-      // retry and the fast path's hidden-count probe both succeed via the default
-      // mock, for 3 calls total: fail, hidden-count probe, retry.
-      mockFetch.mockRejectedValueOnce(new Error('Network error'));
-      await searchPackages({ offset: 0, limit: 30, sort: 'pullCount-desc' });
-      expect(mockFetch).toHaveBeenCalledTimes(3);
+      // pullCount-desc takes the full-fetch path: a count probe, then a batch
+      // fetch, then a ranking-data fetch for scoring. Here the count probe's
+      // first attempt fails and retries successfully -- 4 calls total: failed
+      // probe, retry, batch, ranking data.
+      const countResponse = createMockApiResponse([], 1);
+      const batchResponse = createMockApiResponse(
+        [{ name: 'retried-connector', version: '1.0.0' }],
+        1
+      );
+      mockFetch
+        .mockRejectedValueOnce(new Error('Network error'))
+        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(countResponse) })
+        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(batchResponse) })
+        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ packages: {} }) });
+
+      const result = await searchPackages({ offset: 0, limit: 30, sort: 'pullCount-desc' });
+
+      expect(mockFetch).toHaveBeenCalledTimes(4);
+      expect(result.packages).toHaveLength(1);
+      expect(result.packages[0].name).toBe('retried-connector');
     }, 10000);
   });
 

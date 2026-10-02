@@ -25,6 +25,58 @@ import {
 } from '../connector-utils';
 import semver from 'semver';
 
+// Shape of each entry in ranking-data.json (see scripts/generate-ranking-data.js).
+// Precomputed, build-time download-rate ranking -- see that script for the full
+// maturity/fallback logic. This file is consumed read-only here; nothing in the
+// Store recomputes or re-derives these values at runtime.
+interface RankingEntry {
+  selectedVersion: string;
+  selectedVersionCreatedDate: string;
+  selectedVersionPullCount: number;
+  ratePerDay: number | null;
+  isMature: boolean;
+}
+
+// Served from public/ranking-data.json so other tools can fetch it directly
+// too, not just this app. Fetched once per page session and cached here --
+// a failed fetch falls back to an empty object rather than breaking search.
+let rankingDataCache: Record<string, RankingEntry> | null = null;
+let rankingDataFetchPromise: Promise<Record<string, RankingEntry>> | null = null;
+
+/** Test-only: clears the in-memory ranking-data cache so test cases don't leak state. */
+export function __resetRankingDataCacheForTests(): void {
+  rankingDataCache = null;
+  rankingDataFetchPromise = null;
+}
+
+async function loadRankingData(): Promise<Record<string, RankingEntry>> {
+  if (rankingDataCache) {
+    return rankingDataCache;
+  }
+  if (!rankingDataFetchPromise) {
+    rankingDataFetchPromise = (async () => {
+      try {
+        const response = await fetch('/ranking-data.json');
+        if (!response.ok) {
+          throw new Error(`Failed to fetch ranking data: ${response.status}`);
+        }
+        const data = await response.json();
+        const parsed: Record<string, RankingEntry> = data.packages || {};
+        rankingDataCache = parsed;
+        return parsed;
+      } catch (error) {
+        console.warn('Failed to load ranking data, falling back to unranked order:', error);
+        const empty: Record<string, RankingEntry> = {};
+        rankingDataCache = empty;
+        return empty;
+      } finally {
+        rankingDataFetchPromise = null;
+      }
+    })();
+  }
+  return rankingDataFetchPromise;
+}
+
 const REST_ENDPOINT = 'https://api.central.ballerina.io/2.0/registry/search-packages';
 const PACKAGES_ENDPOINT = 'https://api.central.ballerina.io/2.0/registry/packages';
 const GRAPHQL_ENDPOINT = 'https://api.central.ballerina.io/2.0/graphql';
@@ -196,7 +248,8 @@ function nameRelevanceScore(pkg: BallerinaPackage, query: string): number {
 function sortMergedPackages(
   packages: BallerinaPackage[],
   sort: SortOption,
-  query?: string
+  query?: string,
+  rankingData: Record<string, RankingEntry> = {}
 ): BallerinaPackage[] {
   const sorted = [...packages];
 
@@ -217,17 +270,35 @@ function sortMergedPackages(
           getDisplayName(a.name, vendorA, a.keywords)
         );
       });
-    case 'pullCount-desc':
+    case 'pullCount-desc': {
+      // "Most Popular" now uses precomputed download-rate data (see
+      // scripts/generate-ranking-data.js and RANKING_DATA above), not raw
+      // totalPullCount. The rate spread is extreme (orders of magnitude), so
+      // we log-transform before comparing -- same reasoning as the lifetime-
+      // pullCount skew this replaces. Packages with no entry in RANKING_DATA,
+      // or a null ratePerDay (never reached maturity -- see the script for
+      // the exact rule), sort to the bottom, in no particular order among
+      // themselves (confirmed acceptable).
+      const getRateScore = (pkg: BallerinaPackage): number => {
+        const identity = extractConnectorIdentity(pkg);
+        if (!identity) return 0;
+        const entry = rankingData[`${identity.org}/${identity.packageName}`];
+        if (!entry || entry.ratePerDay === null) return 0;
+        return Math.log10(entry.ratePerDay + 1);
+      };
+
       if (query) {
-        // When searching, sort by name relevance first, then by pull count within same relevance
+        // When searching, sort by name relevance first, then by rate score
+        // within the same relevance group.
         return sorted.sort((a, b) => {
           const scoreA = nameRelevanceScore(a, query);
           const scoreB = nameRelevanceScore(b, query);
           if (scoreA !== scoreB) return scoreA - scoreB;
-          return (b.totalPullCount || 0) - (a.totalPullCount || 0);
+          return getRateScore(b) - getRateScore(a);
         });
       }
-      return sorted.sort((a, b) => (b.totalPullCount || 0) - (a.totalPullCount || 0));
+      return sorted.sort((a, b) => getRateScore(b) - getRateScore(a));
+    }
     case 'pullCount-asc':
       return sorted.sort((a, b) => (a.totalPullCount || 0) - (b.totalPullCount || 0));
     case 'date-desc':
@@ -597,10 +668,16 @@ export async function searchPackages(params: SearchParams): Promise<SearchRespon
   // filterByExactKeywords). All three require the complete result set up front: the API's
   // own count/offset can't be trusted to reflect what the result looks like after that
   // client-side filtering, so a fixed overfetch buffer can't be sized correctly either.
+  // pullCount-desc ("Most Popular") also needs the complete result set: it's
+  // ranked using RANKING_DATA (see above), a precomputed download-rate lookup
+  // covering the whole catalog -- correctly ranking it requires comparing every
+  // matching package against each other, not just whatever one page Central's
+  // own API-side sort would have returned first.
   const needsFullFetch =
     !!params.query ||
     params.sort === 'name-asc' ||
     params.sort === 'name-desc' ||
+    params.sort === 'pullCount-desc' ||
     hasKeywordFilters;
 
   if (needsFullFetch) {
@@ -621,7 +698,10 @@ export async function searchPackages(params: SearchParams): Promise<SearchRespon
     const visible = excludeHidden(merged);
     const exactMatches = filterByExactKeywords(visible, params);
     const filtered = filterByRelevance(exactMatches, params.query);
-    const sorted = sortMergedPackages(filtered, params.sort, params.query);
+    // Only pullCount-desc actually reads ranking data -- skip the fetch
+    // entirely for every other sort to avoid an unnecessary network request.
+    const rankingData = params.sort === 'pullCount-desc' ? await loadRankingData() : {};
+    const sorted = sortMergedPackages(filtered, params.sort, params.query, rankingData);
     const paged = sorted.slice(params.offset, params.offset + params.limit);
     return {
       packages: paged,
@@ -646,7 +726,10 @@ export async function searchPackages(params: SearchParams): Promise<SearchRespon
   result.packages = excludeHidden(result.packages);
   result.count = Math.max(0, result.count - totalHidden);
   result.packages = result.packages.slice(0, params.limit);
-  result.packages = sortMergedPackages(result.packages, params.sort, params.query);
+  // Only pullCount-desc actually reads ranking data -- skip the fetch
+  // entirely for every other sort to avoid an unnecessary network request.
+  const rankingData = params.sort === 'pullCount-desc' ? await loadRankingData() : {};
+  result.packages = sortMergedPackages(result.packages, params.sort, params.query, rankingData);
   result.limit = params.limit;
   return result;
 }
