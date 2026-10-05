@@ -29,6 +29,14 @@ const BASE_URL = process.env.SITE_URL || 'https://wso2.com/integration-platform/
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 const SITEMAP_PATH = path.join(PUBLIC_DIR, 'sitemap.xml');
 
+// Shared with src/lib/connector-utils (HIDDEN_PACKAGES). Entries are a bare
+// package name or "org/name".
+const HIDDEN_PACKAGES = new Set(require('../src/lib/connector-utils/hidden-packages.json'));
+
+function isHiddenPackage(org, name) {
+  return HIDDEN_PACKAGES.has(name) || (!!org && HIDDEN_PACKAGES.has(`${org}/${name}`));
+}
+
 async function fetchAllPackages() {
   const batchSize = 100;
   let allPackages = [];
@@ -106,6 +114,11 @@ function buildSitemapUrls(packages) {
 
     if (urlParts.length >= 2) {
       const [org, packageName] = urlParts;
+
+      if (isHiddenPackage(pkg.organization || org, packageName)) {
+        return;
+      }
+
       const connectorKey = `${org}/${packageName}`;
 
       if (seenConnectors.has(connectorKey)) {
@@ -183,4 +196,8 @@ async function main() {
   }
 }
 
-main();
+if (require.main === module) {
+  main();
+}
+
+module.exports = { buildSitemapUrls, isHiddenPackage };
