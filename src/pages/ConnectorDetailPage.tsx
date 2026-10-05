@@ -49,6 +49,7 @@ import {
   getDisplayName,
   getConnectorDocsUrl,
   getConnectorDocsUrlMap,
+  isHiddenPackage,
 } from '@/lib/connector-utils';
 import MarkdownContent from '@/components/MarkdownContent';
 import Footer from '@/components/Footer';
@@ -116,6 +117,7 @@ export default function ConnectorDetailPage() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const isMobile = useMediaQuery((theme: any) => theme.breakpoints.down('lg'));
   const { org, name, version } = useParams<{ org: string; name: string; version?: string }>();
+  const hidden = !!org && !!name && isHiddenPackage({ name, organization: org });
   const navigate = useNavigate();
 
   const [packageDetails, setPackageDetails] = useState<PackageDetails | null>(null);
@@ -153,6 +155,12 @@ export default function ConnectorDetailPage() {
         return;
       }
 
+      if (hidden) {
+        setPackageDetails(null);
+        setLoading(false);
+        return;
+      }
+
       try {
         setLoading(true);
         setError(null);
@@ -172,7 +180,7 @@ export default function ConnectorDetailPage() {
     return () => {
       cancelled = true;
     };
-  }, [org, name, version, retryCount]);
+  }, [org, name, version, retryCount, hidden]);
 
   // Look up the matching MI connector separately (a "View MI Connector" cross-link is
   // a nice-to-have, not core content) so a slow/hanging lookup here can never block the
@@ -180,7 +188,7 @@ export default function ConnectorDetailPage() {
   // https://github.com/wso2/product-integrator/issues/2553.
   useEffect(() => {
     setMiConnector(null);
-    if (!name) return;
+    if (!name || hidden) return;
 
     let cancelled = false;
     fetchMIConnector(name).then((miConnectorDetails) => {
@@ -192,7 +200,7 @@ export default function ConnectorDetailPage() {
     return () => {
       cancelled = true;
     };
-  }, [name]);
+  }, [name, hidden]);
 
   // Prefetch sitemap in parallel with fetchPackageDetails so it's ready (or cached)
   // by the time package details finish loading.
@@ -552,7 +560,7 @@ export default function ConnectorDetailPage() {
         </Container>
       </Box>
 
-      {loading ? (
+      {loading && !hidden ? (
         <Container maxWidth="xl" sx={{ py: 5 }}>
           <Box sx={{ display: 'flex', gap: 6 }}>
             <Box sx={{ flex: 1, minWidth: 0 }}>
@@ -583,14 +591,26 @@ export default function ConnectorDetailPage() {
             minHeight={400}
           >
             <Typography variant="h5" color="error" gutterBottom>
-              Failed to load connector details
+              {hidden ? 'Connector not found' : 'Failed to load connector details'}
             </Typography>
             <Typography variant="body1" color="text.secondary" sx={{ mb: 3 }}>
-              {error || 'The connector could not be found or is unavailable.'}
+              {hidden
+                ? 'This connector is not available in the store.'
+                : error || 'The connector could not be found or is unavailable.'}
             </Typography>
-            <Button variant="contained" color="primary" onClick={() => setRetryCount((c) => c + 1)}>
-              Retry
-            </Button>
+            {hidden ? (
+              <Button variant="contained" color="primary" onClick={() => navigate('/')}>
+                Back to store
+              </Button>
+            ) : (
+              <Button
+                variant="contained"
+                color="primary"
+                onClick={() => setRetryCount((c) => c + 1)}
+              >
+                Retry
+              </Button>
+            )}
           </Box>
         </Container>
       ) : (
