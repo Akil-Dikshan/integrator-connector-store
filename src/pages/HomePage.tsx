@@ -249,18 +249,29 @@ export default function HomePage() {
       setLoading(true);
       setError(null);
 
-      const response = await searchPackages({
-        query: debouncedQuery,
-        areas: selectedAreas,
-        vendors: selectedVendors,
-        types: selectedTypes,
-        offset: (currentPage - 1) * pageSize,
-        limit: pageSize,
-        sort: sortBy,
-      });
+      const request = (page: number) =>
+        searchPackages({
+          query: debouncedQuery,
+          areas: selectedAreas,
+          vendors: selectedVendors,
+          types: selectedTypes,
+          offset: (page - 1) * pageSize,
+          limit: pageSize,
+          sort: sortBy,
+        });
+
+      let response = await request(currentPage);
 
       // Discard stale responses
       if (fetchId !== fetchIdRef.current) return;
+
+      // Clamp an out-of-range page (e.g. ?page=999) to the last page
+      const lastPage = Math.max(1, Math.ceil(response.count / pageSize));
+      if (currentPage > lastPage) {
+        response = await request(lastPage);
+        if (fetchId !== fetchIdRef.current) return;
+        setCurrentPage(lastPage);
+      }
 
       setConnectors(response.packages);
       setTotalCount(response.count);

@@ -99,4 +99,30 @@ describe('HomePage', () => {
       expect(mockSearchPackages.mock.calls.length).toBeGreaterThan(1);
     });
   });
+
+  it('clamps an out-of-range ?page= to the last page on initial load', async () => {
+    // /?page=999 against 753 results at the default page size of 30 has 26
+    // pages. The first request (offset 29940) comes back empty; HomePage must
+    // refetch the last page (offset 750) and write page 26 back to the URL.
+    const total = 753;
+    mockSearchPackages.mockImplementation(async ({ offset, limit }) => ({
+      packages: offset >= total ? [] : [{ name: `pkg-${offset}` }],
+      count: total,
+      offset,
+      limit,
+    }));
+
+    const router = createMemoryRouter([{ path: '*', element: <HomePage /> }], {
+      initialEntries: ['/?page=999'],
+    });
+
+    render(<RouterProvider router={router} />);
+
+    await waitFor(() => {
+      expect(router.state.location.search).toBe('?page=26');
+    });
+
+    const offsets = mockSearchPackages.mock.calls.map(([args]) => args.offset);
+    expect(offsets).toEqual([29940, 750]);
+  });
 });
