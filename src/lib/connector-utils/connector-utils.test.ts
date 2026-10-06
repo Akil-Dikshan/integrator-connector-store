@@ -28,6 +28,8 @@ import {
   sortConnectors,
   pickOverviewUrl,
   getConnectorDocsUrlMap,
+  HIDDEN_PACKAGES,
+  isHiddenPackage,
   __resetSitemapCacheForTests,
 } from './connector-utils';
 import { BallerinaPackage } from '@/types/connector';
@@ -502,6 +504,41 @@ describe('connector-utils', () => {
       expect(docsUrlMap.get('http')).toBe(
         'https://wso2.com/integration-platform/docs/connectors/catalog/built-in/http/overview'
       );
+    });
+  });
+
+  describe('isHiddenPackage', () => {
+    it('hides a bare-name entry under every org, and with no org at all', () => {
+      HIDDEN_PACKAGES.add('bare-hidden');
+      try {
+        expect(isHiddenPackage({ name: 'bare-hidden' })).toBe(true);
+        expect(isHiddenPackage({ name: 'bare-hidden', organization: 'ballerina' })).toBe(true);
+        expect(isHiddenPackage({ name: 'bare-hidden', organization: 'ballerinax' })).toBe(true);
+      } finally {
+        HIDDEN_PACKAGES.delete('bare-hidden');
+      }
+    });
+
+    it('hides only the matching org for an "org/name" entry', () => {
+      HIDDEN_PACKAGES.add('ballerina/dual-org');
+      try {
+        expect(isHiddenPackage({ name: 'dual-org', organization: 'ballerina' })).toBe(true);
+        expect(isHiddenPackage({ name: 'dual-org', organization: 'ballerinax' })).toBe(false);
+        // Without an org an "org/name" entry cannot match
+        expect(isHiddenPackage({ name: 'dual-org' })).toBe(false);
+      } finally {
+        HIDDEN_PACKAGES.delete('ballerina/dual-org');
+      }
+    });
+
+    it('does not hide packages that are not listed', () => {
+      expect(isHiddenPackage({ name: 'not-in-the-list', organization: 'ballerinax' })).toBe(false);
+      expect(isHiddenPackage({ name: 'not-in-the-list' })).toBe(false);
+    });
+
+    it('loads the shipped list from hidden-packages.json', () => {
+      expect(HIDDEN_PACKAGES.size).toBe(82);
+      expect(HIDDEN_PACKAGES.has('sql')).toBe(true);
     });
   });
 });

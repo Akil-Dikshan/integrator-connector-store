@@ -18,6 +18,7 @@
 
 export interface BallerinaPackage {
   name: string;
+  organization?: string;
   version: string;
   URL: string;
   summary: string;

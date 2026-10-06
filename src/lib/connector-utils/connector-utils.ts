@@ -17,6 +17,7 @@
 */
 
 import { BallerinaPackage, ConnectorMetadata, FilterOptions } from '@/types/connector';
+import hiddenPackages from './hidden-packages.json';
 
 /** Default metadata value for connectors missing Area/Vendor/Type keywords */
 export const METADATA_FALLBACK = 'Other';
@@ -150,91 +151,23 @@ const CAPITALIZATION_DICTIONARY: Record<string, string> = {
 /**
  * Packages to hide from the integration store.
  * These are excluded from all search results, pagination, and filter options.
+ *
+ * Entries are either a bare package name (hides that name under every org) or
+ * "org/name" (hides only that org's package). The list lives in
+ * hidden-packages.json so scripts/generate-sitemap.js can read the same data.
  */
-export const HIDDEN_PACKAGES = new Set<string>([
-  'ai',
-  'ai.eval',
-  'amp',
-  'asyncapi.native.handler',
-  'aws',
-  'choreo',
-  'client.config',
-  'cloud',
-  'financial.iso20022',
-  'financial.iso20022ToSwiftmt',
-  'financial.iso8583',
-  'financial.swift.mt',
-  'financial.swiftmtToIso20022',
-  'health.base',
-  'health.ccda.r3',
-  'health.dicom',
-  'health.dicom.dicomparser',
-  'health.dicom.dicomservice',
-  'health.dicom.dicomweb',
-  'health.fhir.r4.authz',
-  'health.fhir.r4utils',
-  'health.fhir.r5',
-  'health.fhir.r5.international500',
-  'health.fhir.r5.parser',
-  'health.fhir.r5.validator',
-  'health.fhir.r5utils.fhirpath',
-  'health.fhir.templates.r4.diagnosticreport',
-  'health.fhir.templates.r4.encounter',
-  'health.fhir.templates.r4.epicconnect',
-  'health.fhir.templates.r4.metadata',
-  'health.fhir.templates.r4.observation',
-  'health.fhir.templates.r4.organization',
-  'health.fhir.templates.r4.patient',
-  'health.fhir.templates.r4.practitioner',
-  'health.fhir.templates.r4.repositorysync',
-  'health.fhir.templates.r4.servicerequest',
-  'health.fhir.templates.r4.smartconfiguration',
-  'health.fhir.templates.r4.uscore501.encounter',
-  'health.fhir.templates.r4.uscore501.patient',
-  'health.fhirr4',
-  'health.fhirr5',
-  'idetraceprovider',
-  'jballerina.java',
-  'jballerina.java.arrays',
-  'metrics.logs',
-  'moesif',
-  'newrelic',
-  'np',
-  'observe',
-  'openapi',
-  'otel',
-  'persist',
-  'persist.googlesheets',
-  'persist.inmemory',
-  'persist.redis',
-  'persist.sql',
-  'prometheus',
-  'protobuf',
-  'sap',
-  'sap.businessone',
-  'sql',
-  'test',
-  'transformer',
-  'trigger.aayu.mftg.as2',
-  'trigger.asb',
-  'trigger.asgardeo',
-  'trigger.github',
-  'trigger.google.calendar',
-  'trigger.google.drive',
-  'trigger.google.mail',
-  'trigger.google.sheets',
-  'trigger.hubspot',
-  'trigger.identityserver',
-  'trigger.quickbooks',
-  'trigger.salesforce',
-  'trigger.shopify',
-  'trigger.slack',
-  'trigger.twilio',
-  'workflow',
-  'wso2.controlplane',
-  'yaml',
-  'zipkin',
-]);
+export const HIDDEN_PACKAGES = new Set<string>(hiddenPackages);
+
+/**
+ * True if the package is hidden, by bare name or by "org/name".
+ * `organization` is optional: without it only bare-name entries can match.
+ */
+export function isHiddenPackage(pkg: Pick<BallerinaPackage, 'name' | 'organization'>): boolean {
+  return (
+    HIDDEN_PACKAGES.has(pkg.name) ||
+    (!!pkg.organization && HIDDEN_PACKAGES.has(`${pkg.organization}/${pkg.name}`))
+  );
+}
 
 const DOCS_BASE = 'https://wso2.com/integration-platform/docs/connectors/catalog';
 

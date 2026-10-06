@@ -22,6 +22,7 @@ import {
   parseConnectorMetadata,
   getDisplayName,
   HIDDEN_PACKAGES,
+  isHiddenPackage,
 } from '../connector-utils';
 import semver from 'semver';
 
@@ -128,6 +129,7 @@ export interface LatestConnectorEntry {
 interface RawSearchResponse {
   packages: Array<{
     name: string;
+    organization?: string;
     version: string;
     URL: string;
     summary: string;
@@ -571,7 +573,7 @@ function filterByRelevance(packages: BallerinaPackage[], query?: string): Baller
  * Exclude packages listed in the HIDDEN_PACKAGES set
  */
 function excludeHidden(packages: BallerinaPackage[]): BallerinaPackage[] {
-  return packages.filter((pkg) => !HIDDEN_PACKAGES.has(pkg.name));
+  return packages.filter((pkg) => !isHiddenPackage(pkg));
 }
 
 /**
@@ -644,7 +646,7 @@ async function getTotalHiddenCount(orgName?: string): Promise<number> {
     offset: 0,
     limit: 1,
     sort: 'pullCount-desc',
-  }).then((packages) => packages.filter((pkg) => HIDDEN_PACKAGES.has(pkg.name)).length);
+  }).then((packages) => packages.filter((pkg) => isHiddenPackage(pkg)).length);
 
   hiddenCountCache.set(cacheKey, promise);
   return promise;
@@ -874,7 +876,7 @@ export async function fetchLatestConnectorEntries(
 
   batchResults
     .flatMap((result) => result.packages)
-    .filter((pkg) => !HIDDEN_PACKAGES.has(pkg.name))
+    .filter((pkg) => !isHiddenPackage(pkg))
     .forEach((pkg) => {
       const identity = extractConnectorIdentity(pkg);
       if (!identity) {

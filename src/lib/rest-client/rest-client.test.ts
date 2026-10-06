@@ -60,13 +60,14 @@ Object.defineProperty(global, 'localStorage', {
 
 // Helper to create mock API response
 const createMockApiResponse = (
-  packages: Array<{ name: string; version: string; keywords?: string[] }>,
+  packages: Array<{ name: string; version: string; keywords?: string[]; organization?: string }>,
   count: number,
   offset: number = 0,
   limit: number = 30
 ) => ({
   packages: packages.map((pkg) => ({
     name: pkg.name,
+    ...(pkg.organization ? { organization: pkg.organization } : {}),
     version: pkg.version,
     URL: `https://example.com/${pkg.name}`,
     summary: `Summary for ${pkg.name}`,
@@ -388,6 +389,41 @@ describe('rest-client', () => {
         expect(result.packages[0].name).toBe('visible-connector');
       } finally {
         HIDDEN_PACKAGES.delete('internal-module');
+      }
+    });
+
+    it('should hide only the matching org when HIDDEN_PACKAGES has an "org/name" entry', async () => {
+      const { HIDDEN_PACKAGES } = await import('../connector-utils');
+      HIDDEN_PACKAGES.add('ballerina/dual-org');
+
+      try {
+        const catalog = [
+          // Different versions on purpose: the full-fetch path dedupes on name-version
+          // only (not org), so equal versions would collapse before the hide check runs.
+          { name: 'dual-org', organization: 'ballerina', version: '1.0.0' },
+          { name: 'dual-org', organization: 'ballerinax', version: '2.0.0' },
+          { name: 'visible-connector', organization: 'ballerinax', version: '1.0.0' },
+        ];
+        mockFetch
+          .mockResolvedValueOnce({
+            ok: true,
+            json: () => Promise.resolve(createMockApiResponse([], catalog.length)),
+          })
+          .mockResolvedValueOnce({
+            ok: true,
+            json: () => Promise.resolve(createMockApiResponse(catalog, catalog.length)),
+          });
+
+        const result = await searchPackages({ offset: 0, limit: 30, sort: 'pullCount-desc' });
+
+        // organization must survive the API -> app mapping for this to work at all
+        expect(result.packages.map((p) => `${p.organization}/${p.name}`).sort()).toEqual([
+          'ballerinax/dual-org',
+          'ballerinax/visible-connector',
+        ]);
+        expect(result.count).toBe(2);
+      } finally {
+        HIDDEN_PACKAGES.delete('ballerina/dual-org');
       }
     });
 
