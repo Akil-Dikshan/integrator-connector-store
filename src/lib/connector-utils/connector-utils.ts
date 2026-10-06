@@ -18,6 +18,7 @@
 
 import { BallerinaPackage, ConnectorMetadata, FilterOptions } from '@/types/connector';
 import hiddenPackages from './hidden-packages.json';
+import deprecatedPackages from './deprecated-packages.json';
 
 /** Default metadata value for connectors missing Area/Vendor/Type keywords */
 export const METADATA_FALLBACK = 'Other';
@@ -154,9 +155,11 @@ const CAPITALIZATION_DICTIONARY: Record<string, string> = {
  *
  * Entries are either a bare package name (hides that name under every org) or
  * "org/name" (hides only that org's package). The list lives in
- * hidden-packages.json so scripts/generate-sitemap.js can read the same data.
+ * hidden-packages.json (manual) and deprecated-packages.json (packages whose
+ * newest version is deprecated in Ballerina Central) so
+ * scripts/generate-sitemap.js can read the same data.
  */
-export const HIDDEN_PACKAGES = new Set<string>(hiddenPackages);
+export const HIDDEN_PACKAGES = new Set<string>([...hiddenPackages, ...deprecatedPackages]);
 
 /**
  * True if the package is hidden, by bare name or by "org/name".

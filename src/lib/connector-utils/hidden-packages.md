@@ -13,6 +13,13 @@ Each entry is one of:
 
 Matching is exact and case-sensitive. At the moment every entry is a bare name.
 
+## Deprecated packages
+
+[deprecated-packages.json](./deprecated-packages.json) holds packages whose newest version is deprecated in Ballerina Central. They are hidden the same way as entries in `hidden-packages.json` (both files are merged into `HIDDEN_PACKAGES` and the sitemap script's list).
+
+- Entries are `org/name` only (for example `ballerina/regex`), never bare names.
+- A later workflow will regenerate this file, so it holds only entries detected in Ballerina Central. Do not add manual entries here; put them in `hidden-packages.json`, or they will be overwritten.
+
 ## Adding or removing an entry
 
 1. Edit [hidden-packages.json](./hidden-packages.json): add or delete the string.
@@ -22,4 +29,7 @@ Matching is exact and case-sensitive. At the moment every entry is a bare name.
 ## Notes
 
 - `np` hides both `ballerina/np` and `ballerinax/np`, because it is a bare name. This is intentional for now; use `ballerina/np` or `ballerinax/np` to hide only one of them.
+- `ballerina/regex` and `ballerina/data.csv` are hidden via the deprecated list. `data.csv` is hidden because its newest versions are flagged as deprecated, although the underlying cause is only a dependency-resolution problem.
+- `googleapis.calendar` is not deprecated in Ballerina Central; it is hidden manually.
+- `cdc` is hidden manually (not deprecated in Ballerina Central).
 - `trigger.salesforce` is not in the Ballerina Central registry.
