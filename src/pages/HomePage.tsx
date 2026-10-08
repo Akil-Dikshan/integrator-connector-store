@@ -202,6 +202,8 @@ export default function HomePage() {
   const updatingUrlFromStateRef = useRef(false);
   // Ref to track previous URL params
   const prevSearchParamsRef = useRef<string>('');
+  // Ref to mark that the next State->URL update came from a direct Pagination click (push, not replace)
+  const isUserPageClickRef = useRef(false);
 
   // Mobile filter drawer state
   const [mobileFilterOpen, setMobileFilterOpen] = useState(false);
@@ -240,6 +242,12 @@ export default function HomePage() {
   const handleSearchInputChange = (value: string) => {
     setSearchInput(value);
     setCurrentPage(1);
+  };
+
+  // Direct Pagination click: creates a history entry so browser Back returns to the previous page
+  const handlePageChange = (page: number) => {
+    isUserPageClickRef.current = true;
+    setCurrentPage(page);
   };
 
   // Fetch page data from REST API
@@ -387,6 +395,10 @@ export default function HomePage() {
 
   // Sync state to URL params (State -> URL)
   useEffect(() => {
+    // Read and clear unconditionally so a bail-out below can't leak a stale push flag
+    const userPageClick = isUserPageClickRef.current;
+    isUserPageClickRef.current = false;
+
     // Skip if we're currently syncing from URL to avoid infinite loop
     if (syncingFromUrlRef.current) {
       return;
@@ -409,7 +421,7 @@ export default function HomePage() {
     if (newParamsString !== currentParamsString) {
       // Mark that we're updating URL from state
       updatingUrlFromStateRef.current = true;
-      setSearchParams(params, { replace: true });
+      setSearchParams(params, { replace: !userPageClick });
     }
   }, [
     currentPage,
@@ -597,7 +609,7 @@ export default function HomePage() {
                         currentPage={currentPage}
                         totalItems={totalCount}
                         pageSize={pageSize}
-                        onPageChange={setCurrentPage}
+                        onPageChange={handlePageChange}
                         onPageSizeChange={setPageSize}
                         sortBy={sortBy}
                         onSortChange={setSortBy}
@@ -663,7 +675,7 @@ export default function HomePage() {
                         currentPage={currentPage}
                         totalItems={totalCount}
                         pageSize={pageSize}
-                        onPageChange={setCurrentPage}
+                        onPageChange={handlePageChange}
                         onPageSizeChange={setPageSize}
                         sortBy={sortBy}
                         onSortChange={setSortBy}
