@@ -29,7 +29,7 @@ Matching is exact and case-sensitive. At the moment every entry is a bare name.
 ## Notes
 
 - `np` hides both `ballerina/np` and `ballerinax/np`, because it is a bare name. This is intentional for now; use `ballerina/np` or `ballerinax/np` to hide only one of them.
-- `ballerina/regex` and `ballerina/data.csv` are hidden via the deprecated list. `data.csv` is hidden because its newest versions are flagged as deprecated, although the underlying cause is only a dependency-resolution problem.
+- `ballerina/regex` and `ballerina/xmldata` are hidden via the deprecated list. `ballerina/xmldata` is not flagged as deprecated on its newest version in Ballerina Central, so a regenerated list would drop it unless the owners flag it there.
 - `googleapis.calendar` is not deprecated in Ballerina Central; it is hidden manually.
 - `cdc` is hidden manually (not deprecated in Ballerina Central).
 - `trigger.salesforce` is not in the Ballerina Central registry.

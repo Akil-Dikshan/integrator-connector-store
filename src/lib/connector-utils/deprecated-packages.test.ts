@@ -51,7 +51,7 @@ describe('deprecated-packages.json', () => {
 
   it('lists the packages whose newest version is deprecated', () => {
     expect(deprecatedPackages).toEqual(
-      expect.arrayContaining(['ballerina/regex', 'ballerina/data.csv'])
+      expect.arrayContaining(['ballerina/regex', 'ballerina/xmldata'])
     );
   });
 
@@ -70,7 +70,7 @@ describe('deprecated-packages.json', () => {
 describe('isHiddenPackage with deprecated and manually hidden entries', () => {
   it.each([
     ['ballerina', 'regex'],
-    ['ballerina', 'data.csv'],
+    ['ballerina', 'xmldata'],
     ['ballerinax', 'googleapis.calendar'],
   ])('hides %s/%s', (org, name) => {
     expect(isHiddenPackage({ name, organization: org })).toBe(true);
@@ -78,7 +78,7 @@ describe('isHiddenPackage with deprecated and manually hidden entries', () => {
 
   it.each([
     ['ballerinax', 'regex'],
-    ['ballerinax', 'data.csv'],
+    ['ballerinax', 'xmldata'],
   ])('keeps %s/%s visible (entries are org-scoped)', (org, name) => {
     expect(isHiddenPackage({ name, organization: org })).toBe(false);
   });
@@ -86,7 +86,7 @@ describe('isHiddenPackage with deprecated and manually hidden entries', () => {
   it.each([
     ['ballerina', 'task'],
     ['ballerina', 'jwt'],
-    ['ballerina', 'xmldata'],
+    ['ballerina', 'data.csv'],
     ['ballerinax', 'snowflake.driver'],
     ['ballerinax', 'ai.agent'],
     ['ballerinax', 'googleapis.gcalendar'],
@@ -100,14 +100,14 @@ describe('sitemap', () => {
     const locs = sitemap
       .buildSitemapUrls([
         pkg('ballerina', 'regex'),
-        pkg('ballerina', 'data.csv'),
+        pkg('ballerina', 'xmldata'),
         pkg('ballerinax', 'googleapis.calendar'),
         pkg('ballerina', 'task'),
       ])
       .map((u) => u.loc);
 
     expect(locs.some((l) => l.includes('/connector/ballerina/regex/latest'))).toBe(false);
-    expect(locs.some((l) => l.includes('/connector/ballerina/data.csv/latest'))).toBe(false);
+    expect(locs.some((l) => l.includes('/connector/ballerina/xmldata/latest'))).toBe(false);
     expect(locs.some((l) => l.includes('/connector/ballerinax/googleapis.calendar/latest'))).toBe(
       false
     );
