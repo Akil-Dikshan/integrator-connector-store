@@ -30,8 +30,12 @@ const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 const SITEMAP_PATH = path.join(PUBLIC_DIR, 'sitemap.xml');
 
 // Shared with src/lib/connector-utils (HIDDEN_PACKAGES). Entries are a bare
-// package name or "org/name".
-const HIDDEN_PACKAGES = new Set(require('../src/lib/connector-utils/hidden-packages.json'));
+// package name or "org/name". Merges the manual hidden-packages.json with
+// deprecated-packages.json (newest version deprecated in Ballerina Central).
+const HIDDEN_PACKAGES = new Set([
+  ...require('../src/lib/connector-utils/hidden-packages.json'),
+  ...require('../src/lib/connector-utils/deprecated-packages.json'),
+]);
 
 function isHiddenPackage(org, name) {
   return HIDDEN_PACKAGES.has(name) || (!!org && HIDDEN_PACKAGES.has(`${org}/${name}`));

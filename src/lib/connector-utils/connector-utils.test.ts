@@ -537,7 +537,7 @@ describe('connector-utils', () => {
     });
 
     it('loads the shipped list from hidden-packages.json', () => {
-      expect(HIDDEN_PACKAGES.size).toBe(82);
+      expect(HIDDEN_PACKAGES.size).toBe(86);
       expect(HIDDEN_PACKAGES.has('sql')).toBe(true);
     });
   });
