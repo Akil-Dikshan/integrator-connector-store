@@ -157,13 +157,25 @@ export default function HomePage() {
     'HRMS',
     'Healthcare',
   ];
+  const predefinedTypes = [
+    'Connector',
+    'Data Loader',
+    'Driver',
+    'Embedding Provider',
+    'Knowledge Base',
+    'Library',
+    'Model Provider',
+    'Short Term Memory Store',
+    'Trigger',
+    'Vector Store',
+  ];
   const [filterOptions, setFilterOptionsState] = useState<FilterOptions>({
     areas: predefinedAreas,
     vendors: [],
-    types: [],
+    types: predefinedTypes,
   });
   const setFilterOptions = (filters: FilterOptions) => {
-    setFilterOptionsState({ ...filters, areas: predefinedAreas });
+    setFilterOptionsState({ ...filters, areas: predefinedAreas, types: predefinedTypes });
   };
   const [loading, setLoading] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);

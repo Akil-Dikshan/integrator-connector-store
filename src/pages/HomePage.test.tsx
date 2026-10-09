@@ -33,7 +33,13 @@ jest.mock('@/components/Pagination', () => () => null);
 jest.mock('@/components/ConnectorCard', () => () => null);
 jest.mock('@/components/WSO2Header', () => () => null);
 jest.mock('@/components/Hero', () => () => null);
-jest.mock('@/components/FilterSidebar', () => () => null);
+// FilterSidebar is stubbed but records the props it receives, so a test can
+// assert on the filter options HomePage hands to it.
+const mockFilterSidebarProps = [] as unknown[];
+jest.mock('@/components/FilterSidebar', () => (props: { filterOptions: unknown }) => {
+  mockFilterSidebarProps.push(props);
+  return null;
+});
 jest.mock('@/components/SearchBar', () => () => null);
 jest.mock('@/components/Footer', () => () => null);
 jest.mock('@/components/SelectedFilters', () => () => null);
@@ -44,6 +50,7 @@ const mockFetchFiltersProgressively = fetchFiltersProgressively as jest.Mock;
 describe('HomePage', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockFilterSidebarProps.length = 0;
     mockSearchPackages.mockResolvedValue({ packages: [], count: 0, offset: 0, limit: 30 });
     mockFetchFiltersProgressively.mockResolvedValue({ areas: [], vendors: [], types: [] });
   });
@@ -98,6 +105,41 @@ describe('HomePage', () => {
     await waitFor(() => {
       expect(mockSearchPackages.mock.calls.length).toBeGreaterThan(1);
     });
+  });
+
+  it('shows the predefined Type list, ignoring fetched types (e.g. Util)', async () => {
+    mockFetchFiltersProgressively.mockResolvedValue({
+      areas: [],
+      vendors: ['Acme'],
+      types: ['Util', 'Connector', 'Something New'],
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <HomePage />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(mockFilterSidebarProps.length).toBeGreaterThan(0);
+    });
+
+    const { filterOptions } = mockFilterSidebarProps[mockFilterSidebarProps.length - 1] as {
+      filterOptions: { types: string[]; vendors: string[] };
+    };
+    expect(filterOptions.types).toEqual([
+      'Connector',
+      'Data Loader',
+      'Driver',
+      'Embedding Provider',
+      'Knowledge Base',
+      'Library',
+      'Model Provider',
+      'Short Term Memory Store',
+      'Trigger',
+      'Vector Store',
+    ]);
+    expect(filterOptions.vendors).toEqual(['Acme']);
   });
 
   it('clamps an out-of-range ?page= to the last page on initial load', async () => {
