@@ -32,4 +32,5 @@ Matching is exact and case-sensitive. At the moment every entry is a bare name.
 - `ballerina/regex` and `ballerina/xmldata` are hidden via the deprecated list. `ballerina/xmldata` is not flagged as deprecated on its newest version in Ballerina Central, so a regenerated list would drop it unless the owners flag it there.
 - `googleapis.calendar` is not deprecated in Ballerina Central; it is hidden manually.
 - `cdc` is hidden manually (not deprecated in Ballerina Central).
+- The 21 `ballerina/lang.*` libraries (`lang.array` through `lang.xml`) are hidden manually (not deprecated in Ballerina Central). A new `lang.*` library will need its own entry.
 - `trigger.salesforce` is not in the Ballerina Central registry.
