@@ -629,34 +629,64 @@ async function fetchAllForCombination(combo: SearchParams): Promise<BallerinaPac
 }
 
 /**
- * Exact hidden-package count per org scope, computed once by fetching the full
- * unfiltered catalog and cached for the session (in-flight promises are cached
- * too, so concurrent page loads share one fetch). The fast path in searchPackages
- * below used to estimate this proportionally from each page's own local sample,
- * which gave a different (and visibly inconsistent) total depending on which page
- * happened to be requested — see https://github.com/wso2/product-integrator/issues/2552.
+ * The raw, unfiltered catalog per org scope, downloaded once (count probe + 500-row
+ * batches) and shared by everything that needs the whole catalog on a cold load: the
+ * unfiltered full-fetch path (fetchCatalog), the exact hidden-package count
+ * (getTotalHiddenCount) and the filter options (fetchAllPackagesForFilters). In-flight
+ * promises are cached too so concurrent callers share one download, and a failed
+ * download evicts its own entry so the next call retries.
+ *
+ * The cached array is shared: callers must treat it as read-only.
  */
-const hiddenCountCache = new Map<string, Promise<number>>();
+const RAW_CATALOG_TTL = 12 * 60 * 1000; // 12 minutes
+interface RawCatalogEntry {
+  promise: Promise<BallerinaPackage[]>;
+  timestamp: number;
+}
+const rawCatalogCache = new Map<string, RawCatalogEntry>();
 
-/** Test-only: clears the in-memory hidden-count cache so test cases don't leak state. */
-export function __resetHiddenCountCacheForTests(): void {
-  hiddenCountCache.clear();
+function getRawCatalog(orgName?: string): Promise<BallerinaPackage[]> {
+  const cacheKey = orgName ?? 'all';
+  const cached = rawCatalogCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < RAW_CATALOG_TTL) {
+    return cached.promise;
+  }
+
+  const entry: RawCatalogEntry = {
+    promise: fetchAllForCombination({
+      orgName,
+      offset: 0,
+      limit: 1,
+      sort: 'pullCount-desc',
+    }).catch((error) => {
+      // Evict on failure (only if still ours) so the next call retries instead of
+      // reusing a rejected promise; the error still propagates to current callers.
+      if (rawCatalogCache.get(cacheKey) === entry) {
+        rawCatalogCache.delete(cacheKey);
+      }
+      throw error;
+    }),
+    timestamp: Date.now(),
+  };
+  rawCatalogCache.set(cacheKey, entry);
+  return entry.promise;
 }
 
+/** Test-only: clears the in-memory raw-catalog cache so test cases don't leak state. */
+export function __resetHiddenCountCacheForTests(): void {
+  rawCatalogCache.clear();
+}
+
+/**
+ * Exact hidden-package count per org scope, derived from the shared raw catalog.
+ * The fast path in searchPackages below used to estimate this proportionally from
+ * each page's own local sample, which gave a different (and visibly inconsistent)
+ * total depending on which page happened to be requested — see
+ * https://github.com/wso2/product-integrator/issues/2552.
+ */
 async function getTotalHiddenCount(orgName?: string): Promise<number> {
-  const cacheKey = orgName ?? 'all';
-  const cached = hiddenCountCache.get(cacheKey);
-  if (cached) return cached;
-
-  const promise = fetchAllForCombination({
-    orgName,
-    offset: 0,
-    limit: 1,
-    sort: 'pullCount-desc',
-  }).then((packages) => packages.filter((pkg) => isHiddenPackage(pkg)).length);
-
-  hiddenCountCache.set(cacheKey, promise);
-  return promise;
+  const packages = await getRawCatalog(orgName);
+  return packages.filter((pkg) => isHiddenPackage(pkg)).length;
 }
 
 /**
@@ -681,6 +711,7 @@ const fetchedCatalogCache = new Map<string, FetchedCatalogEntry>();
 /** Test-only: clears the in-memory fetched-catalog cache so test cases don't leak state. */
 export function __resetFetchedCatalogCacheForTests(): void {
   fetchedCatalogCache.clear();
+  rawCatalogCache.clear();
 }
 
 function getFetchedCatalogCacheKey(params: SearchParams): string {
@@ -697,8 +728,20 @@ function getFetchedCatalogCacheKey(params: SearchParams): string {
 async function fetchCatalog(params: SearchParams): Promise<BallerinaPackage[]> {
   // Sort is pinned for the fetch itself so the cached order (which breaks ties in
   // the per-call in-memory sort) doesn't depend on whichever sort happened to load first.
-  const combinations = generateFilterCombinations({ ...params, sort: 'pullCount-desc' });
-  const perComboPackages = await Promise.all(combinations.map(fetchAllForCombination));
+  const hasFilters = !!(
+    params.query?.trim() ||
+    params.areas?.length ||
+    params.vendors?.length ||
+    params.types?.length
+  );
+  // Unfiltered: reuse the shared raw download instead of fetching it again.
+  const perComboPackages = hasFilters
+    ? await Promise.all(
+        generateFilterCombinations({ ...params, sort: 'pullCount-desc' }).map(
+          fetchAllForCombination
+        )
+      )
+    : [await getRawCatalog(params.orgName)];
 
   // Merge and deduplicate by name-version (combinations can overlap)
   const packageMap = new Map<string, BallerinaPackage>();
@@ -882,31 +925,13 @@ export async function fetchAllPackagesForFilters(orgName?: string): Promise<Filt
     return cached;
   }
 
-  const batchSize = 100;
+  // Built from the shared raw catalog download (already in flight or cached when
+  // fetchFiltersProgressively ran), not from a loop of 100-row searches.
   let allPackages: BallerinaPackage[] = [];
-  let offset = 0;
-  let hasMore = true;
-
-  // Fetch all packages in batches
-  while (hasMore) {
-    try {
-      const response = await searchPackages({
-        offset,
-        limit: batchSize,
-        sort: 'date-desc',
-        orgName,
-        skipFullFetch: true,
-      });
-
-      allPackages = [...allPackages, ...response.packages];
-      offset += batchSize;
-
-      // Check if we've fetched everything
-      hasMore = offset < response.count;
-    } catch (error) {
-      console.error(`Failed to fetch batch at offset ${offset}:`, error);
-      break;
-    }
+  try {
+    allPackages = excludeHidden(await getRawCatalog(orgName));
+  } catch (error) {
+    console.error('Failed to fetch catalog for filters:', error);
   }
 
   // Extract filter options
