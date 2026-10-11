@@ -2641,12 +2641,6 @@
     <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://wso2.com/integration-platform/connectors/connector/ballerinax/freemarker/latest</loc>
-    <lastmod>2026-08-18</lastmod>
-    <changefreq>weekly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
     <loc>https://wso2.com/integration-platform/connectors/connector/ballerinax/workday.payroll/latest</loc>
     <lastmod>2026-09-30</lastmod>
     <changefreq>weekly</changefreq>
@@ -3793,6 +3787,12 @@
     <priority>0.8</priority>
   </url>
   <url>
+    <loc>https://wso2.com/integration-platform/connectors/connector/ballerinax/oracledb.cdc.driver/latest</loc>
+    <lastmod>2026-08-03</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
     <loc>https://wso2.com/integration-platform/connectors/connector/ballerinax/interzoid.zipinfo/latest</loc>
     <lastmod>2026-09-30</lastmod>
     <changefreq>weekly</changefreq>
@@ -3885,12 +3885,6 @@
   <url>
     <loc>https://wso2.com/integration-platform/connectors/connector/ballerinax/microsoft.onenote/latest</loc>
     <lastmod>2026-10-05</lastmod>
-    <changefreq>weekly</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://wso2.com/integration-platform/connectors/connector/ballerinax/oracledb.cdc.driver/latest</loc>
-    <lastmod>2026-08-03</lastmod>
     <changefreq>weekly</changefreq>
     <priority>0.8</priority>
   </url>

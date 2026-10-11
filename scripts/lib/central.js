@@ -1,6 +1,6 @@
 /**
- * Shared Ballerina Central helpers for the build-time scripts (sitemap, ranking data,
- * priority list), so the retry and batching logic lives in one place.
+ * Shared Ballerina Central helpers for the build-time scripts (ranking data and priority
+ * list), so the retry and batching logic lives in one place.
  */
 
 const SEARCH_ENDPOINT = 'https://api.central.ballerina.io/2.0/registry/search-packages';
