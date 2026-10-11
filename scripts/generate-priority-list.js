@@ -42,41 +42,10 @@ const RANKING_PATH = path.join(PUBLIC_DIR, 'ranking-data.json');
 const HIDDEN_SRC = path.join(ROOT, 'src', 'lib', 'connector-utils', 'hidden-packages.json');
 const DEPRECATED_SRC = path.join(ROOT, 'src', 'lib', 'connector-utils', 'deprecated-packages.json');
 
-const SEARCH_ENDPOINT = 'https://api.central.ballerina.io/2.0/registry/search-packages';
-const BATCH_SIZE = 500;
+const { fetchAllPackages } = require('./lib/central');
+
 // A catalog smaller than this means Central answered badly; don't publish it.
 const MIN_PACKAGES = 100;
-
-async function fetchJson(url, attempts = 3) {
-  let lastError;
-  for (let i = 0; i < attempts; i++) {
-    try {
-      const response = await fetch(url);
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      return await response.json();
-    } catch (error) {
-      lastError = error;
-      await new Promise((resolve) => setTimeout(resolve, 500 * 2 ** i));
-    }
-  }
-  throw new Error(`${url}: ${lastError.message}`);
-}
-
-async function fetchAllPackages() {
-  const query = encodeURIComponent('org:(ballerina OR ballerinax)');
-  const urlFor = (offset) =>
-    `${SEARCH_ENDPOINT}?q=${query}&offset=${offset}&limit=${BATCH_SIZE}&readme=false&sort=pullCount,DESC`;
-
-  const first = await fetchJson(urlFor(0));
-  const offsets = [];
-  for (let offset = BATCH_SIZE; offset < first.count; offset += BATCH_SIZE) offsets.push(offset);
-  const rest = await Promise.all(offsets.map((offset) => fetchJson(urlFor(offset))));
-
-  return {
-    count: first.count,
-    packages: [first, ...rest].flatMap((page) => page.packages || []),
-  };
-}
 
 function readJson(file, fallback) {
   try {
@@ -137,7 +106,7 @@ async function main() {
     console.warn('ranking-data.json is missing or empty: the list will be unranked.');
   }
 
-  const { count, packages } = await fetchAllPackages();
+  const { count, packages } = await fetchAllPackages({ sort: 'pullCount,DESC' });
   if (packages.length < MIN_PACKAGES || packages.length < count * 0.95) {
     throw new Error(
       `only ${packages.length} of ${count} packages came back; keeping existing file`

@@ -24,7 +24,8 @@ if (typeof fetch === 'undefined') {
   process.exit(1);
 }
 
-const REST_ENDPOINT = 'https://api.central.ballerina.io/2.0/registry/search-packages';
+const { fetchAllPackages } = require('./lib/central');
+
 const BASE_URL = process.env.SITE_URL || 'https://wso2.com/integration-platform/connectors';
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 const SITEMAP_PATH = path.join(PUBLIC_DIR, 'sitemap.xml');
@@ -41,44 +42,11 @@ function isHiddenPackage(org, name) {
   return HIDDEN_PACKAGES.has(name) || (!!org && HIDDEN_PACKAGES.has(`${org}/${name}`));
 }
 
-async function fetchAllPackages() {
-  const batchSize = 100;
-  let allPackages = [];
-  let offset = 0;
-  let hasMore = true;
-
+async function fetchConnectorPackages() {
   console.log('Fetching connector packages...');
-
-  while (hasMore) {
-    try {
-      const query = `org:(ballerina OR ballerinax)`;
-      const sort = 'createdDate,DESC';
-      const url = `${REST_ENDPOINT}?offset=${offset}&limit=${batchSize}&sort=${sort}&q=${encodeURIComponent(query)}`;
-
-      const response = await fetch(url);
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const data = await response.json();
-      allPackages = [...allPackages, ...data.packages];
-      offset += batchSize;
-
-      console.log(`Fetched ${allPackages.length} of ${data.count} packages...`);
-
-      // Check if we've fetched everything
-      hasMore = offset < data.count;
-
-      // Add a small delay to avoid rate limiting
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    } catch (error) {
-      console.error(`Failed to fetch batch at offset ${offset}:`, error);
-      throw new Error(`Failed to fetch connector packages at offset ${offset}: ${error.message}`);
-    }
-  }
-
-  console.log(`Total packages fetched: ${allPackages.length}`);
-  return allPackages;
+  const { packages } = await fetchAllPackages({ sort: 'createdDate,DESC' });
+  console.log(`Total packages fetched: ${packages.length}`);
+  return packages;
 }
 
 /**
@@ -170,7 +138,7 @@ async function main() {
     }
 
     // Fetch all packages
-    const packages = await fetchAllPackages();
+    const packages = await fetchConnectorPackages();
 
     if (packages.length === 0) {
       console.error('No packages found. Exiting.');
