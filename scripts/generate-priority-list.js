@@ -18,8 +18,9 @@
  * needs no Central call to render the first page. Packages released after the
  * build are picked up live (see rest-client.ts).
  *
- * The hidden and deprecated lists are also copied next to it in public/
- * (hidden-packages.json, deprecated-packages.json) so other tools can read them.
+ * Copies of the hidden and deprecated lists are committed next to it in public/
+ * (hidden-packages.json, deprecated-packages.json) so other tools can read them. They are
+ * not generated here; a test keeps them identical to the sources the app imports.
  *
  * Failure is soft: if Central can't be reached, or returns a suspiciously small
  * catalog, the previous priority-list.json is left alone. With no file at all the
@@ -94,11 +95,6 @@ function buildPriorityList(packages, hiddenEntries, ranking) {
     .sort((a, b) => rateScore(b.ratePerDay) - rateScore(a.ratePerDay));
 }
 
-function copyListsToPublic() {
-  fs.copyFileSync(HIDDEN_SRC, path.join(PUBLIC_DIR, 'hidden-packages.json'));
-  fs.copyFileSync(DEPRECATED_SRC, path.join(PUBLIC_DIR, 'deprecated-packages.json'));
-}
-
 async function main() {
   const hiddenEntries = [...readJson(HIDDEN_SRC, []), ...readJson(DEPRECATED_SRC, [])];
   const ranking = readJson(RANKING_PATH, {}).packages || {};
@@ -123,7 +119,6 @@ async function main() {
       packages: list,
     }) + '\n'
   );
-  copyListsToPublic();
   console.log(
     `Wrote ${list.length} packages to ${OUTPUT_PATH} (${count} in Central, ${count - list.length} hidden or deprecated)`
   );
@@ -132,12 +127,6 @@ async function main() {
 if (require.main === module) {
   main().catch((error) => {
     console.warn(`Could not refresh priority-list.json: ${error.message}`);
-    try {
-      // The hidden/deprecated copies don't depend on Central, so refresh them anyway.
-      copyListsToPublic();
-    } catch {
-      // ignore: they are a convenience for other tools
-    }
   });
 }
 

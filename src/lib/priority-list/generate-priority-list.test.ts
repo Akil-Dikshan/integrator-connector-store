@@ -1,5 +1,5 @@
 /*
- Copyright (c) 2026 WSO2 LLC. (http://www.wso2.com) All Rights Reserved.
+ Copyright (c) 2026 WSO2 LLC. (http://www.wso2.com).
 
  WSO2 LLC. licenses this file to you under the Apache License,
  Version 2.0 (the "License"); you may not use this file except
@@ -19,6 +19,8 @@
 // scripts/generate-priority-list.js is plain CommonJS. These tests pin that it drops
 // hidden and deprecated packages by the same rule as the app, and ranks like the app does.
 
+import fs from 'fs';
+import path from 'path';
 import { isHiddenPackage, HIDDEN_PACKAGES } from '../connector-utils';
 
 type Generator = {
@@ -97,4 +99,17 @@ describe('generate-priority-list', () => {
 
     expect(list.map((p) => p.name)).toEqual(['b', 'a', 'c']);
   });
+});
+
+describe('public copies of the hidden and deprecated lists', () => {
+  // Other tools read these copies, so they must match what the app itself imports.
+  const read = (file: string) =>
+    JSON.parse(fs.readFileSync(path.join(process.cwd(), file), 'utf8'));
+
+  it.each(['hidden-packages.json', 'deprecated-packages.json'])(
+    'public/%s matches src/lib/connector-utils',
+    (name) => {
+      expect(read(`public/${name}`)).toEqual(read(`src/lib/connector-utils/${name}`));
+    }
+  );
 });

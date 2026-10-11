@@ -459,8 +459,9 @@ graphql AND org:ballerinax AND keyword:Area/Database
 Fetching the whole Ballerina Central catalog in the browser takes 10-30 s, so the build does it once.
 `scripts/generate-priority-list.js` (run by `npm run build` through `scripts/prebuild.sh`, or on demand with
 `npm run generate-priority-list`) fetches every package, drops hidden and deprecated ones, orders the rest by
-`ranking-data.json`, and writes `public/priority-list.json` with the card data the store renders. It also copies
-`hidden-packages.json` and `deprecated-packages.json` into `public/` for other tools.
+`ranking-data.json`, and writes `public/priority-list.json` with the card data the store renders. Copies of
+`hidden-packages.json` and `deprecated-packages.json` are committed in `public/` for other tools; they are not
+generated, and a test fails if they drift from the files in `src/lib/connector-utils/`, so update both together.
 
 At runtime (`src/lib/rest-client/rest-client.ts`):
 
@@ -474,7 +475,8 @@ At runtime (`src/lib/rest-client/rest-client.ts`):
 The live request never blocks the first render; `HomePage` re-fetches the page once it finds something new.
 Rebuild regularly (daily is plenty): a package deprecated or removed after the build stays listed until the next one.
 If `priority-list.json` is missing (for example `npm start` before any build), the store falls back to querying
-Central directly. The generated files are git-ignored.
+Central directly. `priority-list.json` is a build output and is git-ignored; the deployed site serves it at
+`/priority-list.json`, which is the copy to inspect when debugging.
 
 ### Filter option counts
 
