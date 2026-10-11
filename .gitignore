@@ -36,3 +36,8 @@ public/config.js
 next-env.d.ts
 
 *-audit-report/
+
+# Generated at build time by scripts/generate-priority-list.js
+public/priority-list.json
+public/hidden-packages.json
+public/deprecated-packages.json

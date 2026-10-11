@@ -24,7 +24,16 @@ import {
   SearchParams,
   __resetHiddenCountCacheForTests,
   __resetRankingDataCacheForTests,
+  __resetCatalogForTests,
+  refreshCatalog,
+  getFacetCounts,
 } from './rest-client';
+
+import { loadPriorityList } from '../priority-list';
+
+// These tests exercise the Central-only path; the priority list has its own describe below.
+jest.mock('../priority-list', () => ({ loadPriorityList: jest.fn() }));
+const mockLoadPriorityList = loadPriorityList as jest.Mock;
 
 // Mock fetch globally
 const mockFetch = jest.fn();
@@ -98,6 +107,8 @@ describe('rest-client', () => {
     // rest-client.ts); reset it so each test's fetch-call-count assertions
     // stay accurate and independent of test order.
     __resetRankingDataCacheForTests();
+    __resetCatalogForTests();
+    mockLoadPriorityList.mockResolvedValue(null);
 
     // Reset storage - clear store and restore implementations
     Object.keys(storageStore).forEach((key) => delete storageStore[key]);
@@ -127,14 +138,12 @@ describe('rest-client', () => {
       // pullCount-desc ("Most Popular") now takes the full-fetch path (see
       // needsFullFetch in rest-client.ts), since it's ranked using the
       // precomputed RANKING_DATA lookup, not raw totalPullCount -- two real
-      // calls: a count probe (limit=1), then the real batch fetch.
-      const countResponse = createMockApiResponse([], 1);
+      // call: the real batch fetch (the first request already returns the count).
       const batchResponse = createMockApiResponse(
         [{ name: 'test-connector', version: '1.0.0' }],
         1
       );
       mockFetch
-        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(countResponse) })
         .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(batchResponse) })
         .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ packages: {} }) });
 
@@ -146,9 +155,9 @@ describe('rest-client', () => {
 
       const result = await searchPackages(params);
 
-      // pullCount-desc takes the full-fetch path (count probe + batch), plus
-      // a third call to fetch ranking-data.json for scoring -- 3 calls total.
-      expect(mockFetch).toHaveBeenCalledTimes(3);
+      // pullCount-desc takes the full-fetch path (one batch), plus a second call
+      // to fetch ranking-data.json for scoring -- 2 calls total.
+      expect(mockFetch).toHaveBeenCalledTimes(2);
       expect(result.packages).toHaveLength(1);
       expect(result.packages[0].name).toBe('test-connector');
       expect(result.packages[0].totalPullCount).toBe(1000);
@@ -156,12 +165,9 @@ describe('rest-client', () => {
 
     it('should include search query in request', async () => {
       // With a search query, searchPackages fetches all results for client-side filtering.
-      // First call: count check (limit=1), second call: full batch fetch.
-      const countResponse = createMockApiResponse([], 1);
+      // One call: the full batch fetch.
       const batchResponse = createMockApiResponse([{ name: 'stripe', version: '1.0.0' }], 1);
-      mockFetch
-        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(countResponse) })
-        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(batchResponse) });
+      mockFetch.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(batchResponse) });
 
       await searchPackages({ query: 'stripe', offset: 0, limit: 30, sort: 'pullCount-desc' });
       const calledUrl = mockFetch.mock.calls[0][0];
@@ -177,14 +183,11 @@ describe('rest-client', () => {
       //    (`*dynamics 365*`) can still return 0 results for some word pairs, while
       //    ANDing the words as separate wildcard terms (`*dynamics* AND *365*`)
       //    reliably works for every case tested. So words are always split and ANDed.
-      const countResponse = createMockApiResponse([], 1);
       const batchResponse = createMockApiResponse(
         [{ name: 'sap.businessone', version: '1.0.0' }],
         1
       );
-      mockFetch
-        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(countResponse) })
-        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(batchResponse) });
+      mockFetch.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(batchResponse) });
 
       await searchPackages({ query: 'sap business', offset: 0, limit: 30, sort: 'pullCount-desc' });
       const calledUrl = decodeURIComponent(mockFetch.mock.calls[0][0].replace(/\+/g, ' '));
@@ -197,7 +200,6 @@ describe('rest-client', () => {
       // Regression test: the API's literal *dynamics 365* wildcard term returns 0
       // results even though the connector's own name/keywords contain that phrase —
       // verified live. Splitting into `*dynamics* AND *365*` finds it instead.
-      const countResponse = createMockApiResponse([], 1);
       const batchResponse = createMockApiResponse(
         [
           {
@@ -208,9 +210,7 @@ describe('rest-client', () => {
         ],
         1
       );
-      mockFetch
-        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(countResponse) })
-        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(batchResponse) });
+      mockFetch.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(batchResponse) });
 
       const result = await searchPackages({
         query: 'dynamics 365',
@@ -269,8 +269,8 @@ describe('rest-client', () => {
       // a real "azure.openai.text" package (actual vendor: Microsoft) purely because it
       // carries an unrelated bare keyword "Azure OpenAI". filterByExactKeywords must strip
       // these false positives so the UI never shows a connector under the wrong filter.
-      // A Vendor filter now always fetches the complete result set (count check +
-      // batch), so the same response must back both calls.
+      // A Vendor filter now always fetches the complete result set in a single
+      // batch request.
       mockFetch.mockResolvedValue({
         ok: true,
         json: () =>
@@ -359,10 +359,9 @@ describe('rest-client', () => {
         limit: 30,
         sort: 'pullCount-desc',
       });
-      // Each of the 2 area combinations fetches its complete result set (a
-      // count check, then a batch fetch), plus one shared ranking-data fetch
-      // for scoring -- 5 calls total.
-      expect(mockFetch).toHaveBeenCalledTimes(5);
+      // Each of the 2 area combinations fetches its complete result set in one
+      // batch request, plus one shared ranking-data fetch for scoring -- 3 calls.
+      expect(mockFetch).toHaveBeenCalledTimes(3);
     });
 
     it('should exclude hidden packages from results', async () => {
@@ -371,7 +370,6 @@ describe('rest-client', () => {
 
       try {
         // Same full-fetch reasoning as above -- two calls needed, not one.
-        const countResponse = createMockApiResponse([], 2);
         const batchResponse = createMockApiResponse(
           [
             { name: 'visible-connector', version: '1.0.0', keywords: ['Type/Connector'] },
@@ -379,9 +377,7 @@ describe('rest-client', () => {
           ],
           2
         );
-        mockFetch
-          .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(countResponse) })
-          .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(batchResponse) });
+        mockFetch.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(batchResponse) });
 
         const result = await searchPackages({ offset: 0, limit: 30, sort: 'pullCount-desc' });
 
@@ -404,15 +400,10 @@ describe('rest-client', () => {
           { name: 'dual-org', organization: 'ballerinax', version: '2.0.0' },
           { name: 'visible-connector', organization: 'ballerinax', version: '1.0.0' },
         ];
-        mockFetch
-          .mockResolvedValueOnce({
-            ok: true,
-            json: () => Promise.resolve(createMockApiResponse([], catalog.length)),
-          })
-          .mockResolvedValueOnce({
-            ok: true,
-            json: () => Promise.resolve(createMockApiResponse(catalog, catalog.length)),
-          });
+        mockFetch.mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve(createMockApiResponse(catalog, catalog.length)),
+        });
 
         const result = await searchPackages({ offset: 0, limit: 30, sort: 'pullCount-desc' });
 
@@ -448,28 +439,18 @@ describe('rest-client', () => {
         // the whole catalog is fetched, hidden packages filtered, THEN paginated in
         // memory -- so page count is inherently consistent regardless of where the
         // hidden packages happen to fall. Each page is its own searchPackages call
-        // (no cross-call caching), so each needs its own count probe + batch mock.
-        mockFetch
-          .mockResolvedValueOnce({
-            ok: true,
-            json: () => Promise.resolve(createMockApiResponse([], fullCatalog.length)),
-          })
-          .mockResolvedValueOnce({
-            ok: true,
-            json: () => Promise.resolve(createMockApiResponse(fullCatalog, fullCatalog.length)),
-          });
+        // (no cross-call caching), so each needs its own batch mock.
+        mockFetch.mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve(createMockApiResponse(fullCatalog, fullCatalog.length)),
+        });
 
         const firstPage = await searchPackages({ offset: 0, limit: 2, sort: 'pullCount-desc' });
 
-        mockFetch
-          .mockResolvedValueOnce({
-            ok: true,
-            json: () => Promise.resolve(createMockApiResponse([], fullCatalog.length)),
-          })
-          .mockResolvedValueOnce({
-            ok: true,
-            json: () => Promise.resolve(createMockApiResponse(fullCatalog, fullCatalog.length)),
-          });
+        mockFetch.mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve(createMockApiResponse(fullCatalog, fullCatalog.length)),
+        });
 
         const secondPage = await searchPackages({ offset: 2, limit: 2, sort: 'pullCount-desc' });
 
@@ -482,24 +463,21 @@ describe('rest-client', () => {
     });
 
     it('should handle API errors with retry', async () => {
-      // pullCount-desc takes the full-fetch path: a count probe, then a batch
-      // fetch, then a ranking-data fetch for scoring. Here the count probe's
-      // first attempt fails and retries successfully -- 4 calls total: failed
-      // probe, retry, batch, ranking data.
-      const countResponse = createMockApiResponse([], 1);
+      // pullCount-desc takes the full-fetch path: a batch fetch, then a ranking-data
+      // fetch for scoring. Here the batch's first attempt fails and retries
+      // successfully -- 3 calls total: failed attempt, retry, ranking data.
       const batchResponse = createMockApiResponse(
         [{ name: 'retried-connector', version: '1.0.0' }],
         1
       );
       mockFetch
         .mockRejectedValueOnce(new Error('Network error'))
-        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(countResponse) })
         .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(batchResponse) })
         .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ packages: {} }) });
 
       const result = await searchPackages({ offset: 0, limit: 30, sort: 'pullCount-desc' });
 
-      expect(mockFetch).toHaveBeenCalledTimes(4);
+      expect(mockFetch).toHaveBeenCalledTimes(3);
       expect(result.packages).toHaveLength(1);
       expect(result.packages[0].name).toBe('retried-connector');
     }, 10000);
@@ -623,9 +601,9 @@ describe('rest-client', () => {
 
       await fetchFiltersProgressively();
 
-      // 1 call for the batch itself + 2 for the fast path's hidden-count probe
-      // (a count check, then one batch fetch — see #2552)
-      expect(mockFetch).toHaveBeenCalledTimes(3);
+      // 1 call for the batch itself + 1 for the fast path's hidden-count fetch
+      // (a single full batch — see #2552)
+      expect(mockFetch).toHaveBeenCalledTimes(2);
       expect(storageMock.setItem).toHaveBeenCalledWith(getFilterCacheKey(), expect.any(String));
     });
 
@@ -729,6 +707,210 @@ describe('rest-client', () => {
         { org: 'ballerinax', packageName: 'twilio', createdDate: '2026-01-15T00:00:00Z' },
         { org: 'ballerinax', packageName: 'slack', createdDate: '2026-02-01T00:00:00Z' },
       ]);
+    });
+  });
+
+  describe('with a priority list', () => {
+    const listPackage = (
+      name: string,
+      keywords: string[],
+      ratePerDay: number | null,
+      version = '1.0.0'
+    ) => ({
+      organization: 'ballerinax',
+      name,
+      version,
+      URL: `packages/ballerinax/${name}/${version}`,
+      summary: `Summary for ${name}`,
+      keywords,
+      icon: 'https://example.com/icon.png',
+      createdDate: '2025-01-01T00:00:00Z',
+      totalPullCount: 10,
+      ratePerDay,
+    });
+    const priorityList = {
+      generatedAt: '2026-10-10T00:00:00Z',
+      centralCount: 3,
+      packages: [
+        listPackage('alpha', ['Type/Connector', 'Vendor/Acme', 'Area/Finance'], 100),
+        listPackage('bravo', ['Type/Connector', 'Vendor/Acme', 'Area/Finance'], 10),
+        listPackage('charlie', ['Type/Library', 'Vendor/Other'], null),
+      ],
+    };
+    const base: SearchParams = { offset: 0, limit: 30, sort: 'pullCount-desc' };
+    const names = (r: { packages: Array<{ name: string }> }) => r.packages.map((p) => p.name);
+    const urls = () => mockFetch.mock.calls.map(([url]) => decodeURIComponent(String(url)));
+    const batchRequests = () => urls().filter((u) => u.includes('limit=500'));
+    const serve = (recent: Parameters<typeof createMockApiResponse>[0] = []) =>
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve(createMockApiResponse(recent, recent.length)),
+      });
+
+    beforeEach(() => {
+      mockLoadPriorityList.mockResolvedValue(priorityList);
+      serve();
+    });
+
+    it('renders the default view from the list without fetching the catalog from Central', async () => {
+      const result = await searchPackages(base);
+
+      expect(names(result)).toEqual(['alpha', 'bravo', 'charlie']);
+      expect(result.count).toBe(3);
+      expect(batchRequests()).toHaveLength(0);
+    });
+
+    it('pages and re-sorts the unfiltered catalog in memory', async () => {
+      const page2 = await searchPackages({ ...base, offset: 1, limit: 1 });
+      const byName = await searchPackages({ ...base, sort: 'name-desc' });
+
+      expect(names(page2)).toEqual(['bravo']);
+      expect(page2.count).toBe(3);
+      expect(names(byName)).toEqual(['charlie', 'bravo', 'alpha']);
+      expect(batchRequests()).toHaveLength(0);
+    });
+
+    it('answers a Type-only filter from the list, since it matches most of the catalog', async () => {
+      const result = await searchPackages({ ...base, types: ['Library'] });
+
+      expect(names(result)).toEqual(['charlie']);
+      expect(batchRequests()).toHaveLength(0);
+    });
+
+    it('queries Central once for a vendor filter and keeps only exact tag matches', async () => {
+      serve([
+        { name: 'real', version: '1.0.0', keywords: ['Vendor/Acme'] },
+        { name: 'loose', version: '1.0.0', keywords: ['Vendor/Other', 'Acme'] },
+      ]);
+
+      const result = await searchPackages({ ...base, vendors: ['Acme'] });
+
+      expect(names(result)).toEqual(['real']);
+      expect(result.count).toBe(1);
+      expect(batchRequests()).toHaveLength(1);
+      expect(urls().some((u) => u.includes('limit=1&'))).toBe(false);
+    });
+
+    describe('facet counts', () => {
+      it('counts each option with the other filters applied and its own category left out', async () => {
+        // Unfiltered: every option and how many packages carry it.
+        await expect(getFacetCounts({})).resolves.toEqual({
+          areas: { Finance: 2 },
+          vendors: { Acme: 2, Other: 1 },
+          types: { Connector: 2, Library: 1 },
+        });
+
+        // A Vendor filter prunes the other categories, but not its own options, so a
+        // second vendor can still be added.
+        await expect(getFacetCounts({ vendors: ['Other'] })).resolves.toEqual({
+          areas: {},
+          vendors: { Acme: 2, Other: 1 },
+          types: { Library: 1 },
+        });
+      });
+
+      it('ANDs categories: options that would leave nothing are absent', async () => {
+        const counts = await getFacetCounts({ areas: ['Finance'], types: ['Connector'] });
+
+        expect(counts?.vendors).toEqual({ Acme: 2 });
+        // Ignoring its own selection, Type still offers what Area allows.
+        expect(counts?.types).toEqual({ Connector: 2 });
+      });
+
+      it('applies the text query', async () => {
+        await expect(getFacetCounts({ query: 'charlie' })).resolves.toEqual({
+          areas: {},
+          vendors: { Other: 1 },
+          types: { Library: 1 },
+        });
+      });
+
+      it('includes packages released since the build', async () => {
+        serve([{ name: 'fresh', version: '0.1.0', keywords: ['Vendor/Newcomer', 'Type/Trigger'] }]);
+        await refreshCatalog();
+
+        const counts = await getFacetCounts({});
+
+        expect(counts?.vendors.Newcomer).toBe(1);
+        expect(counts?.types.Trigger).toBe(1);
+      });
+
+      it('makes no Central request', async () => {
+        await getFacetCounts({ vendors: ['Acme'] });
+
+        expect(batchRequests()).toHaveLength(0);
+      });
+
+      it('is null without a priority list or for an org-scoped view', async () => {
+        await expect(getFacetCounts({ orgName: 'ballerina' })).resolves.toBeNull();
+
+        mockLoadPriorityList.mockResolvedValue(null);
+        await expect(getFacetCounts({})).resolves.toBeNull();
+      });
+    });
+
+    it('adds packages released since the build after the ranked ones', async () => {
+      serve([
+        { name: 'fresh', version: '0.1.0' },
+        { name: 'alpha', version: '1.0.0' },
+        { name: 'internal-module', version: '1.0.0' },
+      ]);
+      const { HIDDEN_PACKAGES } = await import('../connector-utils');
+      HIDDEN_PACKAGES.add('internal-module');
+
+      try {
+        await expect(refreshCatalog()).resolves.toBe(true);
+        const result = await searchPackages(base);
+
+        expect(names(result)).toEqual(['alpha', 'bravo', 'charlie', 'fresh']);
+        expect(result.count).toBe(4);
+        // Nothing new the second time, so a page re-render isn't needed.
+        await expect(refreshCatalog()).resolves.toBe(false);
+      } finally {
+        HIDDEN_PACKAGES.delete('internal-module');
+      }
+    });
+
+    it('shows a newer version of a listed package without losing its rank', async () => {
+      serve([{ name: 'bravo', version: '2.0.0' }]);
+
+      await expect(refreshCatalog()).resolves.toBe(true);
+      const result = await searchPackages(base);
+
+      expect(names(result)).toEqual(['alpha', 'bravo', 'charlie']);
+      expect(result.packages[1].version).toBe('2.0.0');
+    });
+
+    it('builds the vendor list from the list, then adds vendors of new packages', async () => {
+      serve([{ name: 'fresh', version: '0.1.0', keywords: ['Vendor/Newcomer'] }]);
+      const onUpdate = jest.fn();
+
+      const filters = await fetchFiltersProgressively(undefined, onUpdate);
+
+      expect(filters.vendors).toEqual(expect.arrayContaining(['Acme', 'Other']));
+      expect(filters.vendors).not.toContain('Newcomer');
+      expect(storageMock.setItem).not.toHaveBeenCalled();
+      expect(batchRequests()).toHaveLength(0);
+
+      await refreshCatalog();
+      await Promise.resolve();
+      expect(onUpdate).toHaveBeenCalledTimes(1);
+      expect(onUpdate.mock.calls[0][0].vendors).toContain('Newcomer');
+    });
+
+    it('keeps serving the list when the live check for new packages fails', async () => {
+      mockFetch.mockRejectedValue(new Error('network down'));
+
+      await expect(refreshCatalog()).resolves.toBe(false);
+      const result = await searchPackages(base);
+
+      expect(names(result)).toEqual(['alpha', 'bravo', 'charlie']);
+    }, 10000);
+
+    it('does not use the list for an org-scoped search', async () => {
+      await searchPackages({ ...base, orgName: 'ballerinax' });
+
+      expect(mockLoadPriorityList).not.toHaveBeenCalled();
     });
   });
 

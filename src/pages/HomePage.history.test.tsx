@@ -20,11 +20,13 @@ import React from 'react';
 import { render, waitFor, act, fireEvent, screen } from '@testing-library/react';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import HomePage from './HomePage';
-import { searchPackages, fetchFiltersProgressively } from '@/lib/rest-client';
+import { searchPackages, fetchFiltersProgressively, getFacetCounts } from '@/lib/rest-client';
 
 jest.mock('@/lib/rest-client', () => ({
   searchPackages: jest.fn(),
   fetchFiltersProgressively: jest.fn(),
+  refreshCatalog: jest.fn(),
+  getFacetCounts: jest.fn(),
 }));
 // Pagination is mocked with real buttons that call the real onPageChange /
 // onSortChange props, so the test drives HomePage the way the component does.
@@ -55,9 +57,9 @@ jest.mock('@/components/SelectedFilters', () => () => null);
 const mockSearchPackages = searchPackages as jest.Mock;
 const mockFetchFiltersProgressively = fetchFiltersProgressively as jest.Mock;
 
-const renderHome = async () => {
+const renderHome = async (entry = '/') => {
   const router = createMemoryRouter([{ path: '*', element: <HomePage /> }], {
-    initialEntries: ['/'],
+    initialEntries: [entry],
   });
   render(<RouterProvider router={router} />);
   await waitFor(() => {
@@ -78,6 +80,7 @@ describe('HomePage browser history', () => {
       limit,
     }));
     mockFetchFiltersProgressively.mockResolvedValue({ areas: [], vendors: [], types: [] });
+    (getFacetCounts as jest.Mock).mockResolvedValue(null);
   });
 
   it('pushes a history entry per Pagination click so Back returns to the previous page', async () => {
@@ -101,6 +104,18 @@ describe('HomePage browser history', () => {
 
     await waitFor(() => {
       expect(router.state.location.search).toBe('?page=2');
+    });
+  });
+
+  it('puts the page parameter after the filters in the URL', async () => {
+    const router = await renderHome('/?areas=Finance+%26+Accounting&sort=date-desc');
+
+    fireEvent.click(screen.getAllByText('go-page-3')[0]);
+
+    await waitFor(() => {
+      expect(router.state.location.search).toBe(
+        '?areas=Finance+%26+Accounting&sort=date-desc&page=3'
+      );
     });
   });
 

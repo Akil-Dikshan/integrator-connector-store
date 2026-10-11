@@ -32,7 +32,14 @@ import {
 } from '@wso2/oxygen-ui';
 import { ChevronRight, Filter } from '@wso2/oxygen-ui-icons-react';
 import { BallerinaPackage, FilterOptions } from '@/types/connector';
-import { searchPackages, fetchFiltersProgressively, SortOption } from '@/lib/rest-client';
+import {
+  searchPackages,
+  fetchFiltersProgressively,
+  refreshCatalog,
+  getFacetCounts,
+  SortOption,
+  FacetCounts,
+} from '@/lib/rest-client';
 import Pagination from '@/components/Pagination';
 import ConnectorCard from '@/components/ConnectorCard';
 import WSO2Header from '@/components/WSO2Header';
@@ -177,6 +184,10 @@ export default function HomePage() {
   const setFilterOptions = (filters: FilterOptions) => {
     setFilterOptionsState({ ...filters, areas: predefinedAreas, types: predefinedTypes });
   };
+  // How many results each filter option would give; null until known (or with no priority list)
+  const [facetCounts, setFacetCounts] = useState<FacetCounts | null>(null);
+  // Bumped when the live check changes the catalog, so the counts are recomputed
+  const [catalogRevision, setCatalogRevision] = useState(0);
   const [loading, setLoading] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -321,6 +332,11 @@ export default function HomePage() {
   // state change without breaking subsequent fetches (filters, sorting, etc.).
   const skipInitialLoadingFetchRef = useRef(false);
 
+  // The latest fetchPageData, so work that finishes after mount re-fetches with the
+  // current filters and page rather than the ones captured when it started.
+  const fetchPageDataRef = useRef(fetchPageData);
+  fetchPageDataRef.current = fetchPageData;
+
   // Load filter options once on mount, then load first page
   useEffect(() => {
     const initialize = async () => {
@@ -340,6 +356,14 @@ export default function HomePage() {
 
         skipInitialLoadingFetchRef.current = true;
         setInitialLoading(false);
+
+        // Packages released since the build arrive through a live check that never
+        // blocks the first render; show them once it lands.
+        Promise.resolve(refreshCatalog()).then((changed) => {
+          if (!changed) return;
+          fetchPageDataRef.current();
+          setCatalogRevision((revision) => revision + 1);
+        });
       } catch (error) {
         console.error('Failed to initialize:', error);
         const errorMessage = error instanceof Error ? error.message : 'Failed to load filters.';
@@ -363,6 +387,35 @@ export default function HomePage() {
       fetchPageData();
     }
   }, [initialLoading, fetchPageData]);
+
+  // Keep the sidebar's options in step with the results: recount whenever the filters or
+  // the query change. It reads the in-memory catalog, so it never delays the grid.
+  useEffect(() => {
+    if (initialLoading) return;
+    let stale = false;
+    getFacetCounts({
+      query: debouncedQuery,
+      areas: selectedAreas,
+      vendors: selectedVendors,
+      types: selectedTypes,
+    })
+      .then((counts) => {
+        if (!stale) setFacetCounts(counts);
+      })
+      .catch(() => {
+        if (!stale) setFacetCounts(null);
+      });
+    return () => {
+      stale = true;
+    };
+  }, [
+    initialLoading,
+    debouncedQuery,
+    selectedAreas,
+    selectedVendors,
+    selectedTypes,
+    catalogRevision,
+  ]);
 
   // Sync URL params to state (URL -> State)
   useEffect(() => {
@@ -418,13 +471,15 @@ export default function HomePage() {
 
     const params = new URLSearchParams();
 
-    if (currentPage > 1) params.set('page', currentPage.toString());
-    if (pageSize !== 30) params.set('size', pageSize.toString());
+    // Filters first, then sort and paging, so the URL reads naturally
+    // (?areas=Finance&page=3) and a shared link keeps the same shape.
     if (debouncedQuery) params.set('search', debouncedQuery);
     if (selectedAreas.length > 0) params.set('areas', selectedAreas.join(','));
     if (selectedVendors.length > 0) params.set('vendors', selectedVendors.join(','));
     if (selectedTypes.length > 0) params.set('types', selectedTypes.join(','));
     if (sortBy !== 'pullCount-desc') params.set('sort', sortBy);
+    if (pageSize !== 30) params.set('size', pageSize.toString());
+    if (currentPage > 1) params.set('page', currentPage.toString());
 
     const newParamsString = params.toString();
     const currentParamsString = searchParams.toString();
@@ -524,6 +579,7 @@ export default function HomePage() {
               <Box sx={{ display: { xs: 'none', md: 'block' } }}>
                 <FilterSidebar
                   filterOptions={filterOptions}
+                  facetCounts={facetCounts}
                   selectedAreas={selectedAreas}
                   selectedVendors={selectedVendors}
                   selectedTypes={selectedTypes}
@@ -729,6 +785,7 @@ export default function HomePage() {
 
           <FilterSidebar
             filterOptions={filterOptions}
+            facetCounts={facetCounts}
             selectedAreas={selectedAreas}
             selectedVendors={selectedVendors}
             selectedTypes={selectedTypes}

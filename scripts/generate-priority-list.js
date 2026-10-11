@@ -1,0 +1,175 @@
+#!/usr/bin/env node
+
+/**
+ * Generate priority-list.json for the Integration Store.
+ *
+ * The store used to fetch the whole Ballerina Central catalog in the browser
+ * (about 840 packages, two 500-package requests that take 10-30 s) just to rank
+ * it, drop hidden/deprecated packages and slice out the first page. This script
+ * does that work once, at build time:
+ *
+ *   1. fetch every package from Central,
+ *   2. drop hidden and deprecated packages (the same lists the app uses),
+ *   3. order what is left by the download-rate ranking in ranking-data.json,
+ *   4. write the result, with the card data the store renders, to
+ *      public/priority-list.json.
+ *
+ * At runtime the store reads that one static file for unfiltered views, so it
+ * needs no Central call to render the first page. Packages released after the
+ * build are picked up live (see rest-client.ts).
+ *
+ * The hidden and deprecated lists are also copied next to it in public/
+ * (hidden-packages.json, deprecated-packages.json) so other tools can read them.
+ *
+ * Failure is soft: if Central can't be reached, or returns a suspiciously small
+ * catalog, the previous priority-list.json is left alone. With no file at all the
+ * app falls back to fetching from Central directly, so a Central outage never
+ * breaks a build.
+ *
+ * Output shape:
+ *   { generatedAt, centralCount, total, packages: [ { organization, name, version,
+ *     URL, summary, keywords, icon, createdDate, pullCount, ratePerDay }, ... ] }
+ * `packages` is in default "Most Popular" order.
+ */
+
+const fs = require('fs');
+const path = require('path');
+
+const ROOT = path.join(__dirname, '..');
+const PUBLIC_DIR = path.join(ROOT, 'public');
+const OUTPUT_PATH = path.join(PUBLIC_DIR, 'priority-list.json');
+const RANKING_PATH = path.join(PUBLIC_DIR, 'ranking-data.json');
+const HIDDEN_SRC = path.join(ROOT, 'src', 'lib', 'connector-utils', 'hidden-packages.json');
+const DEPRECATED_SRC = path.join(ROOT, 'src', 'lib', 'connector-utils', 'deprecated-packages.json');
+
+const SEARCH_ENDPOINT = 'https://api.central.ballerina.io/2.0/registry/search-packages';
+const BATCH_SIZE = 500;
+// A catalog smaller than this means Central answered badly; don't publish it.
+const MIN_PACKAGES = 100;
+
+async function fetchJson(url, attempts = 3) {
+  let lastError;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const response = await fetch(url);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return await response.json();
+    } catch (error) {
+      lastError = error;
+      await new Promise((resolve) => setTimeout(resolve, 500 * 2 ** i));
+    }
+  }
+  throw new Error(`${url}: ${lastError.message}`);
+}
+
+async function fetchAllPackages() {
+  const query = encodeURIComponent('org:(ballerina OR ballerinax)');
+  const urlFor = (offset) =>
+    `${SEARCH_ENDPOINT}?q=${query}&offset=${offset}&limit=${BATCH_SIZE}&readme=false&sort=pullCount,DESC`;
+
+  const first = await fetchJson(urlFor(0));
+  const offsets = [];
+  for (let offset = BATCH_SIZE; offset < first.count; offset += BATCH_SIZE) offsets.push(offset);
+  const rest = await Promise.all(offsets.map((offset) => fetchJson(urlFor(offset))));
+
+  return {
+    count: first.count,
+    packages: [first, ...rest].flatMap((page) => page.packages || []),
+  };
+}
+
+function readJson(file, fallback) {
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch {
+    return fallback;
+  }
+}
+
+/**
+ * Same rule as isHiddenPackage in connector-utils.ts: an entry is a bare package
+ * name (every org) or "org/name" (that org only).
+ */
+function makeIsHidden(entries) {
+  const hidden = new Set(entries);
+  return (pkg) =>
+    hidden.has(pkg.name) || (!!pkg.organization && hidden.has(`${pkg.organization}/${pkg.name}`));
+}
+
+/** Same score as getRateScore in rest-client.ts: log-scaled rate, 0 when unranked. */
+function rateScore(ratePerDay) {
+  return typeof ratePerDay === 'number' ? Math.log10(ratePerDay + 1) : 0;
+}
+
+function toEntry(pkg, ranking) {
+  const rate = ranking[`${pkg.organization}/${pkg.name}`]?.ratePerDay;
+  return {
+    organization: pkg.organization,
+    name: pkg.name,
+    version: pkg.version,
+    URL: pkg.URL,
+    summary: pkg.summary,
+    keywords: pkg.keywords || [],
+    icon: pkg.icon,
+    createdDate: pkg.createdDate,
+    pullCount: pkg.pullCount,
+    ratePerDay: typeof rate === 'number' ? Math.round(rate * 1000) / 1000 : null,
+  };
+}
+
+function buildPriorityList(packages, hiddenEntries, ranking) {
+  const isHidden = makeIsHidden(hiddenEntries);
+  return packages
+    .filter((pkg) => !isHidden(pkg))
+    .map((pkg) => toEntry(pkg, ranking))
+    .sort((a, b) => rateScore(b.ratePerDay) - rateScore(a.ratePerDay));
+}
+
+function copyListsToPublic() {
+  fs.copyFileSync(HIDDEN_SRC, path.join(PUBLIC_DIR, 'hidden-packages.json'));
+  fs.copyFileSync(DEPRECATED_SRC, path.join(PUBLIC_DIR, 'deprecated-packages.json'));
+}
+
+async function main() {
+  const hiddenEntries = [...readJson(HIDDEN_SRC, []), ...readJson(DEPRECATED_SRC, [])];
+  const ranking = readJson(RANKING_PATH, {}).packages || {};
+  if (Object.keys(ranking).length === 0) {
+    console.warn('ranking-data.json is missing or empty: the list will be unranked.');
+  }
+
+  const { count, packages } = await fetchAllPackages();
+  if (packages.length < MIN_PACKAGES || packages.length < count * 0.95) {
+    throw new Error(
+      `only ${packages.length} of ${count} packages came back; keeping existing file`
+    );
+  }
+
+  const list = buildPriorityList(packages, hiddenEntries, ranking);
+  fs.writeFileSync(
+    OUTPUT_PATH,
+    JSON.stringify({
+      generatedAt: new Date().toISOString(),
+      centralCount: count,
+      total: list.length,
+      packages: list,
+    }) + '\n'
+  );
+  copyListsToPublic();
+  console.log(
+    `Wrote ${list.length} packages to ${OUTPUT_PATH} (${count} in Central, ${count - list.length} hidden or deprecated)`
+  );
+}
+
+if (require.main === module) {
+  main().catch((error) => {
+    console.warn(`Could not refresh priority-list.json: ${error.message}`);
+    try {
+      // The hidden/deprecated copies don't depend on Central, so refresh them anyway.
+      copyListsToPublic();
+    } catch {
+      // ignore: they are a convenience for other tools
+    }
+  });
+}
+
+module.exports = { buildPriorityList, makeIsHidden, rateScore };

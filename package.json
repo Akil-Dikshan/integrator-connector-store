@@ -13,6 +13,7 @@
     "build": "DISABLE_ESLINT_PLUGIN=true react-app-rewired build",
     "prebuild": "sh scripts/prebuild.sh",
     "generate-sitemap": "node scripts/generate-sitemap.js",
+    "generate-priority-list": "node scripts/generate-priority-list.js",
     "test": "react-app-rewired test",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",

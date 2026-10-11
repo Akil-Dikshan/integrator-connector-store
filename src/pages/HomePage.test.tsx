@@ -20,7 +20,12 @@ import React from 'react';
 import { render, waitFor, act } from '@testing-library/react';
 import { MemoryRouter, createMemoryRouter, RouterProvider } from 'react-router-dom';
 import HomePage from './HomePage';
-import { searchPackages, fetchFiltersProgressively } from '@/lib/rest-client';
+import {
+  searchPackages,
+  fetchFiltersProgressively,
+  refreshCatalog,
+  getFacetCounts,
+} from '@/lib/rest-client';
 
 // Isolate HomePage's own effect-scheduling logic: stub out every child
 // component (their internals aren't what this test is about) and mock the
@@ -28,6 +33,8 @@ import { searchPackages, fetchFiltersProgressively } from '@/lib/rest-client';
 jest.mock('@/lib/rest-client', () => ({
   searchPackages: jest.fn(),
   fetchFiltersProgressively: jest.fn(),
+  refreshCatalog: jest.fn(),
+  getFacetCounts: jest.fn(),
 }));
 jest.mock('@/components/Pagination', () => () => null);
 jest.mock('@/components/ConnectorCard', () => () => null);
@@ -45,6 +52,8 @@ jest.mock('@/components/Footer', () => () => null);
 jest.mock('@/components/SelectedFilters', () => () => null);
 
 const mockSearchPackages = searchPackages as jest.Mock;
+const mockRefreshCatalog = refreshCatalog as jest.Mock;
+const mockGetFacetCounts = getFacetCounts as jest.Mock;
 const mockFetchFiltersProgressively = fetchFiltersProgressively as jest.Mock;
 
 describe('HomePage', () => {
@@ -53,6 +62,8 @@ describe('HomePage', () => {
     mockFilterSidebarProps.length = 0;
     mockSearchPackages.mockResolvedValue({ packages: [], count: 0, offset: 0, limit: 30 });
     mockFetchFiltersProgressively.mockResolvedValue({ areas: [], vendors: [], types: [] });
+    mockRefreshCatalog.mockResolvedValue(false);
+    mockGetFacetCounts.mockResolvedValue(null);
   });
 
   it('fetches the initial page exactly once on mount, not twice', async () => {
@@ -78,6 +89,79 @@ describe('HomePage', () => {
     });
 
     expect(mockSearchPackages).toHaveBeenCalledTimes(1);
+  });
+
+  it('re-fetches the page once when new packages arrive after the first render', async () => {
+    // The priority list renders instantly; packages released since its build arrive
+    // through a live check afterwards (refreshCatalog) and must appear without a reload.
+    mockRefreshCatalog.mockResolvedValue(true);
+
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <HomePage />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(mockSearchPackages).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it('does not re-fetch when the live check finds nothing new', async () => {
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <HomePage />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(mockRefreshCatalog).toHaveBeenCalledTimes(1);
+    });
+    await act(async () => {});
+
+    expect(mockSearchPackages).toHaveBeenCalledTimes(1);
+  });
+
+  it('hands the sidebar the facet counts for the current filters', async () => {
+    const counts = { areas: { Finance: 2 }, vendors: { Acme: 2 }, types: {} };
+    mockGetFacetCounts.mockResolvedValue(counts);
+
+    render(
+      <MemoryRouter initialEntries={['/?vendors=Acme']}>
+        <HomePage />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      const last = mockFilterSidebarProps[mockFilterSidebarProps.length - 1] as {
+        facetCounts: unknown;
+      };
+      expect(last.facetCounts).toEqual(counts);
+    });
+    expect(mockGetFacetCounts).toHaveBeenCalledWith(
+      expect.objectContaining({ vendors: ['Acme'], areas: [], types: [] })
+    );
+  });
+
+  it('recounts the options when the live check adds new packages', async () => {
+    // The live check lands after the first render, as it does in practice.
+    let finishCheck: (changed: boolean) => void = () => {};
+    mockRefreshCatalog.mockReturnValue(new Promise<boolean>((resolve) => (finishCheck = resolve)));
+
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <HomePage />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(mockGetFacetCounts).toHaveBeenCalledTimes(1);
+    });
+    await act(async () => finishCheck(true));
+
+    await waitFor(() => {
+      expect(mockGetFacetCounts).toHaveBeenCalledTimes(2);
+    });
   });
 
   it('still fetches again on a real filter/sort/page change after mount', async () => {

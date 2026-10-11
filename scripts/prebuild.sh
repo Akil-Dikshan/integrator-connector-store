@@ -5,3 +5,6 @@
 
 echo "Generating sitemap.xml..."
 node scripts/generate-sitemap.js
+
+echo "Generating priority-list.json..."
+node scripts/generate-priority-list.js

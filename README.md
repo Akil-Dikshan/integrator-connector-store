@@ -454,6 +454,37 @@ Results: Merged and deduplicated
 graphql AND org:ballerinax AND keyword:Area/Database
 ```
 
+### Priority List (build-time catalog)
+
+Fetching the whole Ballerina Central catalog in the browser takes 10-30 s, so the build does it once.
+`scripts/generate-priority-list.js` (run by `npm run build` through `scripts/prebuild.sh`, or on demand with
+`npm run generate-priority-list`) fetches every package, drops hidden and deprecated ones, orders the rest by
+`ranking-data.json`, and writes `public/priority-list.json` with the card data the store renders. It also copies
+`hidden-packages.json` and `deprecated-packages.json` into `public/` for other tools.
+
+At runtime (`src/lib/rest-client/rest-client.ts`):
+
+| View                                        | Source                                                                       |
+| ------------------------------------------- | ---------------------------------------------------------------------------- |
+| Unfiltered view, any sort, Type-only filter | the priority list, no Central call                                           |
+| Vendor/Area filter, text search             | one Central request (`limit=500`), re-checked exactly on the client          |
+| Vendor list                                 | derived from the list's `Vendor/` tags                                       |
+| Packages released after the build           | one live request for the 50 newest packages, merged in after the ranked ones |
+
+The live request never blocks the first render; `HomePage` re-fetches the page once it finds something new.
+Rebuild regularly (daily is plenty): a package deprecated or removed after the build stays listed until the next one.
+If `priority-list.json` is missing (for example `npm start` before any build), the store falls back to querying
+Central directly. The generated files are git-ignored.
+
+### Filter option counts
+
+With a priority list, the sidebar only offers options that would leave results. `getFacetCounts`
+(`rest-client.ts`) counts, over the in-memory catalog, how many packages each Area/Vendor/Type option
+would give with the other selected filters and the search text applied (a category's own selection is
+left out, since values inside a category are OR'd). Options with no results are hidden unless selected,
+a section with nothing to choose is dropped, and the rest keep their usual order in a scrollable list.
+It adds no Central call. Without a priority list every option is shown as before.
+
 ### Filter Caching
 
 **24-Hour localStorage Cache:**
