@@ -20,11 +20,13 @@ import React from 'react';
 import { render, waitFor, act, fireEvent, screen } from '@testing-library/react';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import HomePage from './HomePage';
-import { searchPackages, fetchFiltersProgressively } from '@/lib/rest-client';
+import { searchPackages, fetchFiltersProgressively, getFacetCounts } from '@/lib/rest-client';
 
 jest.mock('@/lib/rest-client', () => ({
   searchPackages: jest.fn(),
   fetchFiltersProgressively: jest.fn(),
+  refreshCatalog: jest.fn(),
+  getFacetCounts: jest.fn(),
 }));
 // Pagination is mocked with real buttons that call the real onPageChange /
 // onSortChange props, so the test drives HomePage the way the component does.
@@ -78,6 +80,7 @@ describe('HomePage browser history', () => {
       limit,
     }));
     mockFetchFiltersProgressively.mockResolvedValue({ areas: [], vendors: [], types: [] });
+    (getFacetCounts as jest.Mock).mockResolvedValue(null);
   });
 
   it('pushes a history entry per Pagination click so Back returns to the previous page', async () => {

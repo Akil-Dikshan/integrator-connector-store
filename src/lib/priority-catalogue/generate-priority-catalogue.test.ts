@@ -19,6 +19,7 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { isHiddenPackage, HIDDEN_PACKAGES } from '../connector-utils';
 import {
   searchPackages,
   __resetFetchedCatalogCacheForTests,
@@ -33,13 +34,25 @@ type GeneratorModule = {
     packages: Raw[];
     ranking: Ranking;
     hidden: Set<string>;
+    centralCount?: number;
     generatedAt?: string;
-  }) => { generatedAt: string; totalCount: number; packages: Array<Record<string, unknown>> };
+  }) => {
+    generatedAt: string;
+    centralCount: number;
+    totalCount: number;
+    packages: Array<Record<string, unknown>>;
+  };
   clearPriorityCatalogue: (outPath?: string) => void;
   writePriorityCatalogue: (
     packages: Raw[],
-    options?: { outPath?: string; rankingPath?: string; hidden?: Set<string> }
-  ) => boolean;
+    options?: {
+      outPath?: string;
+      rankingPath?: string;
+      hidden?: Set<string>;
+      centralCount?: number;
+    }
+  ) => { totalCount: number };
+  isHidden: (pkg: Raw, hidden: Set<string>) => boolean;
 };
 
 let generator: GeneratorModule;
@@ -102,16 +115,26 @@ describe('buildPriorityCatalogue', () => {
     expect(names(page)).toEqual(['b', 'a', 'c']);
   });
 
-  it('de-duplicates by name+version before hiding, so a hidden duplicate still shadows', () => {
-    // First entry is hidden by org/name; the second has the same name+version but
-    // another org. The app drops the second as a duplicate, THEN hides the first.
+  it('keeps same-named packages from different orgs: identity is org/name', () => {
     const page = generator.buildPriorityCatalogue({
       packages: [raw('ballerina', 'dup'), raw('ballerinax', 'dup'), raw('ballerinax', 'ok')],
       ranking: {},
       hidden: new Set(['ballerina/dup']),
     });
-    expect(names(page)).toEqual(['ok']);
-    expect(page.totalCount).toBe(1);
+    expect(names(page)).toEqual(['dup', 'ok']);
+    expect(page.packages[0].organization).toBe('ballerinax');
+  });
+
+  it('records the download rate of each package and the Central count of the build', () => {
+    const page = generator.buildPriorityCatalogue({
+      packages: [raw('ballerinax', 'a'), raw('ballerinax', 'b'), raw('ballerinax', 'gone')],
+      ranking: { 'ballerinax/a': rate(1.23456), 'ballerinax/gone': rate(5) },
+      hidden: new Set(['gone']),
+      centralCount: 3,
+    });
+    expect(page.packages.map((p) => p.ratePerDay)).toEqual([1.235, null]);
+    expect(page.centralCount).toBe(3);
+    expect(page.totalCount).toBe(2);
   });
 
   it('hides by bare name and by org/name, org-aware', () => {
@@ -141,6 +164,7 @@ describe('buildPriorityCatalogue', () => {
     });
     expect(page).toEqual({
       generatedAt: '2026-01-01T00:00:00.000Z',
+      centralCount: 1,
       totalCount: 1,
       packages: [
         {
@@ -153,6 +177,7 @@ describe('buildPriorityCatalogue', () => {
           icon: 'https://example.test/one.png',
           createdDate: 1700000000000,
           totalPullCount: 42,
+          ratePerDay: null,
         },
       ],
     });
@@ -190,20 +215,20 @@ describe('writePriorityCatalogue / clearPriorityCatalogue', () => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
-  it('writes the file from the ranking data and returns true', () => {
+  it('writes the file from the ranking data, atomically, and returns the page', () => {
     fs.writeFileSync(
       rankingPath,
       JSON.stringify({ packages: { 'ballerinax/b': { ratePerDay: 9 } } })
     );
-    const ok = generator.writePriorityCatalogue([raw('ballerinax', 'a'), raw('ballerinax', 'b')], {
-      outPath,
-      rankingPath,
-      hidden: new Set(),
-    });
-    expect(ok).toBe(true);
+    const page = generator.writePriorityCatalogue(
+      [raw('ballerinax', 'a'), raw('ballerinax', 'b')],
+      { outPath, rankingPath, hidden: new Set(), centralCount: 5 }
+    );
+    expect(page.totalCount).toBe(2);
     const written = JSON.parse(fs.readFileSync(outPath, 'utf8'));
     expect(written.packages.map((p: { name: string }) => p.name)).toEqual(['b', 'a']);
-    expect(written.totalCount).toBe(2);
+    expect(written).toMatchObject({ totalCount: 2, centralCount: 5 });
+    expect(fs.existsSync(`${outPath}.tmp`)).toBe(false);
   });
 
   it.each([
@@ -211,25 +236,23 @@ describe('writePriorityCatalogue / clearPriorityCatalogue', () => {
     ['unparsable', '{not json'],
     ['without packages', JSON.stringify({ generatedAt: 'x' })],
     ['empty', JSON.stringify({ packages: {} })],
-  ])('writes nothing and does not throw when ranking data is %s', (_label, content) => {
+  ])('throws and writes nothing when ranking data is %s', (_label, content) => {
     if (content !== undefined) fs.writeFileSync(rankingPath, content);
-    let ok = true;
-    expect(() => {
-      ok = generator.writePriorityCatalogue([raw('ballerinax', 'a')], {
+    expect(() =>
+      generator.writePriorityCatalogue([raw('ballerinax', 'a')], {
         outPath,
         rankingPath,
         hidden: new Set(),
-      });
-    }).not.toThrow();
-    expect(ok).toBe(false);
+      })
+    ).toThrow();
     expect(fs.existsSync(outPath)).toBe(false);
   });
 
-  it('writes nothing and does not throw when there are no packages', () => {
+  it('throws and writes nothing when there are no visible packages', () => {
     fs.writeFileSync(rankingPath, JSON.stringify({ packages: { 'a/b': { ratePerDay: 1 } } }));
-    expect(generator.writePriorityCatalogue([], { outPath, rankingPath, hidden: new Set() })).toBe(
-      false
-    );
+    expect(() =>
+      generator.writePriorityCatalogue([], { outPath, rankingPath, hidden: new Set() })
+    ).toThrow();
     expect(fs.existsSync(outPath)).toBe(false);
   });
 
@@ -241,14 +264,26 @@ describe('writePriorityCatalogue / clearPriorityCatalogue', () => {
   });
 });
 
-describe('generate-sitemap integration', () => {
-  it('exports fetchAllPackages so the generator can reuse the sitemap download', async () => {
-    global.fetch = jest.fn();
-    const sitemap = (await import('../../../scripts/generate-sitemap')) as unknown as {
-      fetchAllPackages: unknown;
-    };
-    expect(typeof sitemap.fetchAllPackages).toBe('function');
+describe('hidden and deprecated lists', () => {
+  it('agrees with the app on every entry of the real lists', () => {
+    const entries = new Set<string>(HIDDEN_PACKAGES);
+    [...entries].forEach((entry) => {
+      const [org, name] = entry.includes('/') ? entry.split('/') : ['ballerinax', entry];
+      const pkg = raw(org, name);
+      expect(generator.isHidden(pkg, entries)).toBe(isHiddenPackage(pkg as never));
+    });
   });
+
+  // Other tools read the copies in public/, so they must match what the app imports.
+  const read = (file: string) =>
+    JSON.parse(fs.readFileSync(path.join(process.cwd(), file), 'utf8'));
+
+  it.each(['hidden-packages.json', 'deprecated-packages.json'])(
+    'public/%s matches src/lib/connector-utils',
+    (name) => {
+      expect(read(`public/${name}`)).toEqual(read(`src/lib/connector-utils/${name}`));
+    }
+  );
 });
 
 describe('parity with the live default view', () => {
@@ -265,7 +300,6 @@ describe('parity with the live default view', () => {
     for (let i = 0; i < 40; i++) {
       catalogue.push(raw(i % 7 === 0 ? 'ballerina' : 'ballerinax', `pkg${i}`));
     }
-    catalogue.splice(5, 0, raw('ballerinax', 'pkg3')); // duplicate name+version
     catalogue.splice(9, 0, raw('ballerinax', 'sql')); // hidden by bare name
     const ranking: Ranking = {};
     catalogue.forEach((p, i) => {

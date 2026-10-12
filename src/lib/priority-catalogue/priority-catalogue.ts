@@ -25,33 +25,21 @@ import { isHiddenPackage } from '@/lib/connector-utils';
  * default view can render before Ballerina Central responds. The file is optional:
  * anything missing or malformed means "no snapshot" and the app behaves as before.
  */
+export interface PriorityCatalogueCard extends BallerinaPackage {
+  /** Download rate behind the ranking; null when the package has none. */
+  ratePerDay: number | null;
+}
+
 export interface PriorityCatalogue {
   generatedAt: string;
+  /** Total packages Central reported at build time, hidden ones included. */
+  centralCount: number;
   /** Visible packages in the whole catalogue (after hiding). */
   totalCount: number;
-  packages: BallerinaPackage[];
+  packages: PriorityCatalogueCard[];
 }
 
-const DEFAULT_SORT = 'pullCount-desc';
-
-/** True for the one ordering the catalogue holds: no search, no filters, Most Popular. */
-export function isDefaultView(view: {
-  query: string;
-  areas: string[];
-  vendors: string[];
-  types: string[];
-  sort: string;
-}): boolean {
-  return (
-    !view.query &&
-    view.areas.length === 0 &&
-    view.vendors.length === 0 &&
-    view.types.length === 0 &&
-    view.sort === DEFAULT_SORT
-  );
-}
-
-function isCard(value: unknown): value is BallerinaPackage {
+function isCard(value: unknown): value is PriorityCatalogueCard {
   if (!value || typeof value !== 'object') return false;
   const p = value as Record<string, unknown>;
   return (
@@ -67,7 +55,8 @@ function isCard(value: unknown): value is BallerinaPackage {
     Array.isArray(p.keywords) &&
     p.keywords.every((k) => typeof k === 'string') &&
     (p.organization === undefined || typeof p.organization === 'string') &&
-    (p.totalPullCount === undefined || typeof p.totalPullCount === 'number')
+    (p.totalPullCount === undefined || typeof p.totalPullCount === 'number') &&
+    (p.ratePerDay === null || (typeof p.ratePerDay === 'number' && Number.isFinite(p.ratePerDay)))
   );
 }
 
@@ -78,7 +67,7 @@ function isCard(value: unknown): value is BallerinaPackage {
  */
 export function parsePriorityCatalogue(data: unknown): PriorityCatalogue | null {
   if (!data || typeof data !== 'object' || Array.isArray(data)) return null;
-  const { generatedAt, totalCount, packages } = data as Record<string, unknown>;
+  const { generatedAt, centralCount, totalCount, packages } = data as Record<string, unknown>;
   if (typeof generatedAt !== 'string') return null;
   if (!Array.isArray(packages) || packages.length === 0) return null;
   // A truncated or hand-edited file does not match its own total.
@@ -88,15 +77,18 @@ export function parsePriorityCatalogue(data: unknown): PriorityCatalogue | null 
   const visible = packages.filter((pkg) => !isHiddenPackage(pkg));
   if (visible.length === 0) return null;
 
-  return { generatedAt, totalCount: visible.length, packages: visible };
+  return {
+    generatedAt,
+    centralCount: typeof centralCount === 'number' ? centralCount : packages.length,
+    totalCount: visible.length,
+    packages: visible,
+  };
 }
 
-let loaded: PriorityCatalogue | null = null;
 let loadPromise: Promise<PriorityCatalogue | null> | null = null;
 
 /** Test-only: forgets the loaded catalogue so cases don't leak state. */
 export function __resetPriorityCatalogueForTests(): void {
-  loaded = null;
   loadPromise = null;
 }
 
@@ -114,34 +106,14 @@ export function loadPriorityCatalogue(): Promise<PriorityCatalogue | null> {
           cache: 'no-cache',
         });
         if (!response.ok) return null;
-        loaded = parsePriorityCatalogue(await response.json());
-        return loaded;
+        const catalogue = parsePriorityCatalogue(await response.json());
+        if (!catalogue)
+          console.warn('priority-catalogue.json is not valid; querying Central instead.');
+        return catalogue;
       } catch {
         return null;
       }
     })();
   }
   return loadPromise;
-}
-
-/** The catalogue if it has already loaded (and is usable), else null. Synchronous. */
-export function peekPriorityCatalogue(): PriorityCatalogue | null {
-  return loaded;
-}
-
-/**
- * The cards and total for one page of the default view, or null when the page lies
- * beyond the catalogue (the live path then clamps it, as today).
- */
-export function catalogueView(
-  catalogue: PriorityCatalogue,
-  page: number,
-  pageSize: number
-): { packages: BallerinaPackage[]; count: number } | null {
-  const offset = (page - 1) * pageSize;
-  if (offset >= catalogue.packages.length) return null;
-  return {
-    packages: catalogue.packages.slice(offset, offset + pageSize),
-    count: catalogue.packages.length,
-  };
 }

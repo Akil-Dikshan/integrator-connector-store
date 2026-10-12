@@ -16,12 +16,5 @@
  under the License.
 */
 
-export {
-  loadPriorityCatalogue,
-  peekPriorityCatalogue,
-  parsePriorityCatalogue,
-  isDefaultView,
-  catalogueView,
-} from './priority-catalogue';
-export type { PriorityCatalogue } from './priority-catalogue';
-export { mergePage, packageKey } from './merge';
+export { loadPriorityCatalogue, parsePriorityCatalogue } from './priority-catalogue';
+export type { PriorityCatalogue, PriorityCatalogueCard } from './priority-catalogue';

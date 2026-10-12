@@ -2,13 +2,26 @@
 
 /**
  * Generate public/priority-catalogue.json: every visible package in "Most Popular"
- * order, holding just the card data, so the default view can render before
- * Ballerina Central answers (see src/lib/priority-catalogue).
+ * order, holding the card data the store renders, so the default view needs no call to
+ * Ballerina Central (see src/lib/priority-catalogue).
  *
- * Runs from generate-sitemap.js on the packages it already downloaded, so there is
- * no second fetch. It only READS public/ranking-data.json (never writes it). The
- * output is gitignored and a failed run leaves no file behind: the app then behaves
- * exactly as it does without a snapshot.
+ *   1. fetch every package from Central (scripts/lib/central.js),
+ *   2. drop hidden and deprecated packages (the lists the app uses),
+ *   3. order what is left by the download-rate ranking in ranking-data.json,
+ *   4. write the result to public/priority-catalogue.json.
+ *
+ * It only READS public/ranking-data.json (never writes it). The output is gitignored.
+ *
+ * The catalogue drives what the store renders, so an incomplete one is worse than none:
+ * if Central can't be reached, doesn't return every package it reports, or the result
+ * fails validation, this exits 1 and fails the build instead of shipping a partial
+ * file. For a build that can't reach Central on purpose (offline, a quick local check),
+ * set SKIP_PRIORITY_CATALOGUE=true: any previous file is removed, nothing is generated
+ * and the store falls back to querying Central directly.
+ *
+ * Copies of the hidden and deprecated lists are committed next to it in public/
+ * (hidden-packages.json, deprecated-packages.json) so other tools can read them. They are
+ * not generated here; a test keeps them identical to the sources the app imports.
  *
  * By hand: npm run generate-priority
  */
@@ -19,6 +32,11 @@ const path = require('path');
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 const OUTPUT_PATH = path.join(PUBLIC_DIR, 'priority-catalogue.json');
 const RANKING_PATH = path.join(PUBLIC_DIR, 'ranking-data.json');
+
+const { fetchAllPackages } = require('./lib/central');
+
+// A catalogue smaller than this means Central answered badly; don't publish it.
+const MIN_PACKAGES = 100;
 
 // Same hide lists as the app (src/lib/connector-utils HIDDEN_PACKAGES).
 function loadHiddenPackages() {
@@ -54,7 +72,8 @@ function rateScore(pkg, ranking) {
   return Math.log10(entry.ratePerDay + 1);
 }
 
-function toCard(pkg) {
+function toCard(pkg, ranking) {
+  const rate = ranking[connectorKey(pkg)]?.ratePerDay;
   return {
     name: pkg.name,
     organization: pkg.organization,
@@ -65,6 +84,8 @@ function toCard(pkg) {
     icon: pkg.icon,
     createdDate: pkg.createdDate,
     totalPullCount: pkg.pullCount,
+    // Download rate behind the ranking; null when the package has none.
+    ratePerDay: typeof rate === 'number' ? Math.round(rate * 1000) / 1000 : null,
   };
 }
 
@@ -88,6 +109,9 @@ function validate(page) {
     if (typeof pkg.summary !== 'string' || typeof pkg.icon !== 'string') {
       throw new Error(`priority-catalogue: package #${i} (${pkg.name}) is missing summary or icon`);
     }
+    if (pkg.ratePerDay !== null && !Number.isFinite(pkg.ratePerDay)) {
+      throw new Error(`priority-catalogue: package #${i} (${pkg.name}) has an invalid ratePerDay`);
+    }
     if (!Array.isArray(pkg.keywords)) {
       throw new Error(`priority-catalogue: package #${i} (${pkg.name}) is missing keywords`);
     }
@@ -95,82 +119,87 @@ function validate(page) {
 }
 
 /**
- * Pure: what searchPackages({ sort: 'pullCount-desc' }) lists across all pages --
- * de-duplicate by name+version first, then hide, then stable-sort by rate score.
- * Ties keep input order, as in the app.
+ * Pure: the packages the default view lists (hidden ones removed), in "Most Popular"
+ * order. Ties keep input order. `packages` must already be unique per org/name, as
+ * fetchAllPackages returns them.
  */
 function buildPriorityCatalogue({
   packages,
   ranking,
   hidden,
+  centralCount = packages.length,
   generatedAt = new Date().toISOString(),
 }) {
-  // Same order as fetchCatalog in rest-client.ts: a hidden duplicate still shadows.
-  const seen = new Set();
-  const visible = [];
-  for (const pkg of packages) {
-    const id = `${pkg.name}-${pkg.version}`;
-    if (seen.has(id)) continue;
-    seen.add(id);
-    if (isHidden(pkg, hidden)) continue;
-    visible.push(pkg);
-  }
-
-  const scored = visible.map((pkg) => ({ pkg, score: rateScore(pkg, ranking) }));
+  const scored = packages
+    .filter((pkg) => !isHidden(pkg, hidden))
+    .map((pkg) => ({ pkg, score: rateScore(pkg, ranking) }));
   scored.sort((a, b) => b.score - a.score);
 
   const page = {
     generatedAt,
+    centralCount,
     totalCount: scored.length,
-    packages: scored.map(({ pkg }) => toCard(pkg)),
+    packages: scored.map(({ pkg }) => toCard(pkg, ranking)),
   };
   validate(page);
   return page;
 }
 
-/** Removes any previous output so a failed run can never leave a stale file. */
+/** Removes any previous output so a failed or skipped run can never leave a stale file. */
 function clearPriorityCatalogue(outPath = OUTPUT_PATH) {
-  try {
-    fs.rmSync(outPath, { force: true });
-  } catch (error) {
-    console.warn(`priority-catalogue: could not remove ${outPath}: ${error.message}`);
-  }
+  fs.rmSync(outPath, { force: true });
 }
 
 /**
- * Builds and writes the file. Never throws: returns false (and writes nothing) when
- * the ranking data or the packages are unusable.
+ * Builds and writes the file. Throws when the ranking data or the packages are unusable;
+ * nothing is written then. The write is atomic (temp file, then rename).
  */
 function writePriorityCatalogue(packages, options = {}) {
   const outPath = options.outPath || OUTPUT_PATH;
   const rankingPath = options.rankingPath || RANKING_PATH;
-  try {
-    const ranking = JSON.parse(fs.readFileSync(rankingPath, 'utf8')).packages;
-    if (!ranking || typeof ranking !== 'object' || Object.keys(ranking).length === 0) {
-      throw new Error(`no ranking entries in ${rankingPath}`);
-    }
-    const hidden = options.hidden || loadHiddenPackages();
-    const page = buildPriorityCatalogue({ packages, ranking, hidden });
 
-    const tmpPath = `${outPath}.tmp`;
-    fs.writeFileSync(tmpPath, JSON.stringify(page), 'utf8');
-    fs.renameSync(tmpPath, outPath);
-    console.log(`✓ Priority catalogue written: ${page.totalCount} packages -> ${outPath}`);
-    return true;
-  } catch (error) {
-    console.warn(`priority-catalogue: not generated (${error.message}); the app runs without it.`);
-    return false;
+  const ranking = JSON.parse(fs.readFileSync(rankingPath, 'utf8')).packages;
+  if (!ranking || typeof ranking !== 'object' || Object.keys(ranking).length === 0) {
+    throw new Error(`no ranking entries in ${rankingPath}`);
   }
+  const page = buildPriorityCatalogue({
+    packages,
+    ranking,
+    hidden: options.hidden || loadHiddenPackages(),
+    centralCount: options.centralCount ?? packages.length,
+  });
+
+  const tmpPath = `${outPath}.tmp`;
+  fs.writeFileSync(tmpPath, JSON.stringify(page) + '\n', 'utf8');
+  fs.renameSync(tmpPath, outPath);
+  return page;
 }
 
 async function main() {
   clearPriorityCatalogue();
+  if (process.env.SKIP_PRIORITY_CATALOGUE === 'true') {
+    console.warn('SKIP_PRIORITY_CATALOGUE=true: not generating priority-catalogue.json.');
+    return;
+  }
   try {
-    // Lazy: generate-sitemap requires this module, so a top-level require would cycle.
-    const { fetchAllPackages } = require('./generate-sitemap');
-    writePriorityCatalogue(await fetchAllPackages());
+    // Throws unless every package Central reports came back.
+    const { count, packages } = await fetchAllPackages({ sort: 'pullCount,DESC' });
+    if (packages.length < MIN_PACKAGES) {
+      throw new Error(
+        `only ${packages.length} packages came back; expected at least ${MIN_PACKAGES}`
+      );
+    }
+    const page = writePriorityCatalogue(packages, { centralCount: count });
+    console.log(
+      `Wrote ${page.totalCount} packages to ${OUTPUT_PATH} (${count} in Central, ${count - page.totalCount} hidden or deprecated)`
+    );
   } catch (error) {
-    console.warn(`priority-catalogue: not generated (${error.message}); the app runs without it.`);
+    clearPriorityCatalogue();
+    console.error(`Could not generate priority-catalogue.json: ${error.message}`);
+    console.error(
+      'Fix the cause and rebuild, or set SKIP_PRIORITY_CATALOGUE=true to build without it.'
+    );
+    process.exit(1);
   }
 }
 
@@ -178,4 +207,10 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { buildPriorityCatalogue, clearPriorityCatalogue, writePriorityCatalogue };
+module.exports = {
+  buildPriorityCatalogue,
+  clearPriorityCatalogue,
+  writePriorityCatalogue,
+  isHidden,
+  rateScore,
+};

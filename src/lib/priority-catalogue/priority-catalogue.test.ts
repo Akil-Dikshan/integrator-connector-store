@@ -19,9 +19,6 @@
 import {
   parsePriorityCatalogue,
   loadPriorityCatalogue,
-  peekPriorityCatalogue,
-  isDefaultView,
-  catalogueView,
   __resetPriorityCatalogueForTests,
 } from './priority-catalogue';
 
@@ -35,11 +32,13 @@ const card = (name: string, extra: Record<string, unknown> = {}) => ({
   icon: 'https://example.test/icon.png',
   createdDate: 1700000000000,
   totalPullCount: 5,
+  ratePerDay: 1.5,
   ...extra,
 });
 
 const file = (packages: unknown[], extra: Record<string, unknown> = {}) => ({
   generatedAt: '2026-10-12T00:00:00.000Z',
+  centralCount: packages.length + 2,
   totalCount: packages.length,
   packages,
   ...extra,
@@ -65,9 +64,19 @@ describe('parsePriorityCatalogue', () => {
     ['a card without name', file([card('a'), card('', {})])],
     ['a card without URL', file([card('a', { URL: '' })])],
     ['a card with bad keywords', file([card('a', { keywords: [1] })])],
+    ['a card without ratePerDay', file([card('a', { ratePerDay: undefined })])],
+    ['a card with a non-numeric ratePerDay', file([card('a', { ratePerDay: 'fast' })])],
     ['a card with bad createdDate', file([card('a', { createdDate: null })])],
   ])('returns null for %s', (_label, data) => {
     expect(parsePriorityCatalogue(data)).toBeNull();
+  });
+
+  it('keeps each download rate and the Central count of the build', () => {
+    const parsed = parsePriorityCatalogue(
+      file([card('a'), card('b', { ratePerDay: null })], { centralCount: 9 })
+    );
+    expect(parsed?.packages.map((p) => p.ratePerDay)).toEqual([1.5, null]);
+    expect(parsed?.centralCount).toBe(9);
   });
 
   it('removes hidden packages and lowers the total accordingly', () => {
@@ -130,13 +139,6 @@ describe('loadPriorityCatalogue', () => {
     expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 
-  it('peek is null before the load and the catalogue after it', async () => {
-    expect(peekPriorityCatalogue()).toBeNull();
-    mockFetch.mockResolvedValue(respond(file([card('a')])));
-    await loadPriorityCatalogue();
-    expect(peekPriorityCatalogue()?.packages).toHaveLength(1);
-  });
-
   it.each([
     ['a 404', () => respond({}, { ok: false, status: 404 })],
     [
@@ -154,7 +156,6 @@ describe('loadPriorityCatalogue', () => {
   ])('resolves null for %s', async (_label, make) => {
     mockFetch.mockResolvedValue(make());
     await expect(loadPriorityCatalogue()).resolves.toBeNull();
-    expect(peekPriorityCatalogue()).toBeNull();
   });
 
   it('resolves null when fetch rejects', async () => {
@@ -166,38 +167,5 @@ describe('loadPriorityCatalogue', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (global as any).fetch = undefined;
     await expect(loadPriorityCatalogue()).resolves.toBeNull();
-  });
-});
-
-describe('isDefaultView', () => {
-  const base = { query: '', areas: [], vendors: [], types: [], sort: 'pullCount-desc' };
-
-  it('is true only without query, filters and with the default sort (any page)', () => {
-    expect(isDefaultView(base)).toBe(true);
-    expect(isDefaultView({ ...base, query: 'x' })).toBe(false);
-    expect(isDefaultView({ ...base, areas: ['Finance'] })).toBe(false);
-    expect(isDefaultView({ ...base, vendors: ['Amazon'] })).toBe(false);
-    expect(isDefaultView({ ...base, types: ['Connector'] })).toBe(false);
-    expect(isDefaultView({ ...base, sort: 'name-asc' })).toBe(false);
-  });
-});
-
-describe('catalogueView', () => {
-  const catalogue = parsePriorityCatalogue(
-    file(Array.from({ length: 25 }, (_, i) => card(`p${i}`)))
-  )!;
-
-  it('slices by page and page size and reports the total', () => {
-    const view = catalogueView(catalogue, 2, 10)!;
-    expect(view.packages.map((p) => p.name)).toEqual(
-      Array.from({ length: 10 }, (_, i) => `p${10 + i}`)
-    );
-    expect(view.count).toBe(25);
-    expect(catalogueView(catalogue, 3, 10)!.packages).toHaveLength(5);
-  });
-
-  it('is null when the page is beyond the catalogue', () => {
-    expect(catalogueView(catalogue, 4, 10)).toBeNull();
-    expect(catalogueView(catalogue, 999, 30)).toBeNull();
   });
 });
