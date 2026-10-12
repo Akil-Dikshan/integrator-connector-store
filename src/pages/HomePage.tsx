@@ -33,6 +33,14 @@ import {
 import { ChevronRight, Filter } from '@wso2/oxygen-ui-icons-react';
 import { BallerinaPackage, FilterOptions } from '@/types/connector';
 import { searchPackages, fetchFiltersProgressively, SortOption } from '@/lib/rest-client';
+import {
+  loadPriorityCatalogue,
+  peekPriorityCatalogue,
+  isDefaultView,
+  catalogueView,
+  mergePage,
+  packageKey,
+} from '@/lib/priority-catalogue';
 import Pagination from '@/components/Pagination';
 import ConnectorCard from '@/components/ConnectorCard';
 import WSO2Header from '@/components/WSO2Header';
@@ -137,7 +145,26 @@ export default function HomePage() {
     };
   }, [mode]);
 
-  const [connectors, setConnectors] = useState<BallerinaPackage[]>([]);
+  // The default view can paint from the priority catalogue (public/priority-catalogue.json)
+  // before Ballerina Central answers. Only read here when it has already loaded; otherwise
+  // it is applied by the effect below as soon as it arrives. Any other view starts as today.
+  const [{ opensDefaultView, initialSnapshot }] = useState(() => {
+    const page = parsePageParam(searchParams.get('page'));
+    const size = parsePageSizeParam(searchParams.get('size'));
+    const isDefault = isDefaultView({
+      query: searchParams.get('search') || '',
+      areas: searchParams.get('areas')?.split(',').filter(Boolean) || [],
+      vendors: searchParams.get('vendors')?.split(',').filter(Boolean) || [],
+      types: searchParams.get('types')?.split(',').filter(Boolean) || [],
+      sort: parseSortParam(searchParams.get('sort')),
+    });
+    if (!isDefault) return { opensDefaultView: false, initialSnapshot: null };
+    void loadPriorityCatalogue();
+    const catalogue = peekPriorityCatalogue();
+    const view = catalogue ? catalogueView(catalogue, page, size) : null;
+    return { opensDefaultView: true, initialSnapshot: view ? { ...view, page, size } : null };
+  });
+  const [connectors, setConnectors] = useState<BallerinaPackage[]>(initialSnapshot?.packages ?? []);
   const predefinedAreas = [
     'Built-in',
     'CRM & Sales',
@@ -178,9 +205,9 @@ export default function HomePage() {
     setFilterOptionsState({ ...filters, areas: predefinedAreas, types: predefinedTypes });
   };
   const [loading, setLoading] = useState(false);
-  const [initialLoading, setInitialLoading] = useState(true);
+  const [initialLoading, setInitialLoading] = useState(!initialSnapshot);
   const [error, setError] = useState<string | null>(null);
-  const [totalCount, setTotalCount] = useState(0);
+  const [totalCount, setTotalCount] = useState(initialSnapshot?.count ?? 0);
 
   // Search input is immediate (for responsive typing), debouncedQuery drives API calls
   const [searchInput, setSearchInput] = useState(() => searchParams.get('search') || '');
@@ -206,6 +233,16 @@ export default function HomePage() {
 
   // Ref to discard stale fetch responses
   const fetchIdRef = useRef(0);
+  // Set while the cards on screen come from the priority catalogue (and which page and
+  // size they are), until a live response replaces them or the user leaves that view.
+  const snapshotShownRef = useRef<{ page: number; pageSize: number } | null>(
+    initialSnapshot ? { page: initialSnapshot.page, pageSize: initialSnapshot.size } : null
+  );
+  // True once Central has answered; a catalogue arriving after that is ignored.
+  const liveLandedRef = useRef(false);
+  // True once the page spinner was cleared by the catalogue, so initialize() must not
+  // arm skipInitialLoadingFetchRef for a state change that will never happen.
+  const initialLoadingClearedRef = useRef(!!initialSnapshot);
   // Ref to track if initial fetch is done
   const initialFetchDoneRef = useRef(false);
   // Ref to prevent URL->State sync from running (when URL changes from external source)
@@ -265,8 +302,35 @@ export default function HomePage() {
   // Fetch page data from REST API
   const fetchPageData = useCallback(async () => {
     const fetchId = ++fetchIdRef.current;
+    // Silent: the cards on screen are the catalogue's for exactly this view, so the live
+    // response merges in without a spinner. Anything else takes the normal path.
+    const shown = snapshotShownRef.current;
+    const isDefault = isDefaultView({
+      query: debouncedQuery,
+      areas: selectedAreas,
+      vendors: selectedVendors,
+      types: selectedTypes,
+      sort: sortBy,
+    });
+    let silent = isDefault && !!shown && shown.page === currentPage && shown.pageSize === pageSize;
+    if (!silent && isDefault && !liveLandedRef.current) {
+      // Page or size changed before live data landed: serve that slice from the catalogue
+      // if it has loaded and covers it. The live request below still runs and merges in.
+      const catalogue = peekPriorityCatalogue();
+      const view = catalogue ? catalogueView(catalogue, currentPage, pageSize) : null;
+      if (view) {
+        snapshotShownRef.current = { page: currentPage, pageSize };
+        setConnectors(view.packages);
+        setTotalCount(view.count);
+        setLoading(false);
+        silent = true;
+      }
+    }
+    if (!silent) {
+      snapshotShownRef.current = null;
+    }
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);
       setError(null);
 
       const request = (page: number) =>
@@ -284,20 +348,32 @@ export default function HomePage() {
 
       // Discard stale responses
       if (fetchId !== fetchIdRef.current) return;
+      liveLandedRef.current = true;
 
       // Clamp an out-of-range page (e.g. ?page=999) to the last page
       const lastPage = Math.max(1, Math.ceil(response.count / pageSize));
+      let clamped = false;
       if (currentPage > lastPage) {
         response = await request(lastPage);
         if (fetchId !== fetchIdRef.current) return;
         setCurrentPage(lastPage);
+        clamped = true;
       }
 
-      setConnectors(response.packages);
+      // Merge into the catalogue cards (keeps their order and DOM nodes); otherwise replace.
+      const livePackages = response.packages;
+      const merge = !!snapshotShownRef.current && !clamped;
+      snapshotShownRef.current = null;
+      setConnectors((prev) => (merge ? mergePage(prev, livePackages) : livePackages));
       setTotalCount(response.count);
       setLoading(false);
     } catch (error) {
       if (fetchId !== fetchIdRef.current) return;
+      if (snapshotShownRef.current) {
+        // Keep the catalogue cards; there is nothing to tell the user.
+        console.warn('Live refresh failed, keeping the saved catalogue:', error);
+        return;
+      }
       console.error('Failed to fetch page data:', error);
       const errorMessage =
         error instanceof Error
@@ -325,7 +401,7 @@ export default function HomePage() {
   useEffect(() => {
     const initialize = async () => {
       try {
-        setInitialLoading(true);
+        if (!initialLoadingClearedRef.current) setInitialLoading(true);
 
         // Phase 1: Load first page immediately (fast)
         await fetchPageData();
@@ -338,18 +414,72 @@ export default function HomePage() {
         });
         setFilterOptions(filters);
 
-        skipInitialLoadingFetchRef.current = true;
-        setInitialLoading(false);
+        if (!initialLoadingClearedRef.current) {
+          skipInitialLoadingFetchRef.current = true;
+          setInitialLoading(false);
+        }
       } catch (error) {
-        console.error('Failed to initialize:', error);
-        const errorMessage = error instanceof Error ? error.message : 'Failed to load filters.';
-        setError(errorMessage);
-        skipInitialLoadingFetchRef.current = true;
-        setInitialLoading(false);
+        if (snapshotShownRef.current) {
+          // The catalogue cards are on screen; a filter-load failure is not worth an error.
+          console.warn('Failed to load filter options, keeping the saved catalogue:', error);
+        } else {
+          console.error('Failed to initialize:', error);
+          const errorMessage = error instanceof Error ? error.message : 'Failed to load filters.';
+          setError(errorMessage);
+        }
+        if (!initialLoadingClearedRef.current) {
+          skipInitialLoadingFetchRef.current = true;
+          setInitialLoading(false);
+        }
       }
     };
 
     initialize();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Latest view, for the one-off catalogue callback below (which outlives a render).
+  const latestViewRef = useRef({ debouncedQuery, selectedAreas, selectedVendors, selectedTypes });
+  latestViewRef.current = { debouncedQuery, selectedAreas, selectedVendors, selectedTypes };
+  const latestPagingRef = useRef({ currentPage, pageSize, sortBy });
+  latestPagingRef.current = { currentPage, pageSize, sortBy };
+
+  // The catalogue usually arrives after the first render: show it, unless Central already
+  // answered or the user has moved to another view. The live fetch already in flight then
+  // merges in silently.
+  useEffect(() => {
+    if (!opensDefaultView) return;
+    let cancelled = false;
+    loadPriorityCatalogue().then((catalogue) => {
+      if (cancelled || !catalogue || liveLandedRef.current || snapshotShownRef.current) return;
+      const { debouncedQuery, selectedAreas, selectedVendors, selectedTypes } =
+        latestViewRef.current;
+      const { currentPage, pageSize, sortBy } = latestPagingRef.current;
+      const isDefault = isDefaultView({
+        query: debouncedQuery,
+        areas: selectedAreas,
+        vendors: selectedVendors,
+        types: selectedTypes,
+        sort: sortBy,
+      });
+      const view = isDefault ? catalogueView(catalogue, currentPage, pageSize) : null;
+      if (!view) return;
+
+      snapshotShownRef.current = { page: currentPage, pageSize };
+      setConnectors(view.packages);
+      setTotalCount(view.count);
+      setLoading(false);
+      // An error from a request that failed before the cards arrived no longer applies.
+      setError(null);
+      if (!initialLoadingClearedRef.current) {
+        initialLoadingClearedRef.current = true;
+        skipInitialLoadingFetchRef.current = true;
+        setInitialLoading(false);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -664,7 +794,7 @@ export default function HomePage() {
                       >
                         {connectors.map((connector) => (
                           <ConnectorCard
-                            key={`${connector.name}-${connector.version}`}
+                            key={packageKey(connector)}
                             connector={connector}
                             effectiveMode={effectiveMode}
                           />

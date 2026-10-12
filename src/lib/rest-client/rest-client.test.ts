@@ -24,6 +24,7 @@ import {
   SearchParams,
   __resetHiddenCountCacheForTests,
   __resetRankingDataCacheForTests,
+  __resetFetchedCatalogCacheForTests,
 } from './rest-client';
 
 // Mock fetch globally
@@ -98,6 +99,11 @@ describe('rest-client', () => {
     // rest-client.ts); reset it so each test's fetch-call-count assertions
     // stay accurate and independent of test order.
     __resetRankingDataCacheForTests();
+
+    // The full-fetch path caches the merged catalog per filter set (see
+    // rest-client.ts); reset it so each test's request-count assertions stay
+    // accurate and independent of test order.
+    __resetFetchedCatalogCacheForTests();
 
     // Reset storage - clear store and restore implementations
     Object.keys(storageStore).forEach((key) => delete storageStore[key]);
@@ -729,6 +735,240 @@ describe('rest-client', () => {
         { org: 'ballerinax', packageName: 'twilio', createdDate: '2026-01-15T00:00:00Z' },
         { org: 'ballerinax', packageName: 'slack', createdDate: '2026-02-01T00:00:00Z' },
       ]);
+    });
+  });
+
+  describe('searchPackages fetched-catalog cache', () => {
+    const catalog = ['conn-a', 'conn-b', 'conn-c', 'conn-d', 'conn-e'].map((name) => ({
+      name,
+      version: '1.0.0',
+    }));
+
+    // Serves the catalog by offset/limit like Central does; ranking-data and any
+    // other non-search URL gets an empty payload.
+    const serveCatalog = () => {
+      mockFetch.mockImplementation(async (url: string) => {
+        if (!url.includes('offset=')) {
+          return { ok: true, json: () => Promise.resolve({ packages: {} }) };
+        }
+        const params = new URL(url, 'https://example.com').searchParams;
+        const offset = Number(params.get('offset'));
+        const limit = Number(params.get('limit'));
+        return {
+          ok: true,
+          json: () =>
+            Promise.resolve(
+              createMockApiResponse(
+                catalog.slice(offset, offset + limit),
+                catalog.length,
+                offset,
+                limit
+              )
+            ),
+        };
+      });
+    };
+    const centralCalls = () =>
+      mockFetch.mock.calls.filter(([url]) => String(url).includes('offset=')).length;
+    const base: SearchParams = { query: 'conn', offset: 0, limit: 2, sort: 'name-asc' };
+
+    it('should not re-fetch from Central when only the page changes', async () => {
+      serveCatalog();
+      const page1 = await searchPackages(base);
+      // One full fetch = 1 count probe + 1 batch request.
+      expect(centralCalls()).toBe(2);
+
+      const page2 = await searchPackages({ ...base, offset: 2 });
+      expect(centralCalls()).toBe(2);
+      expect(page1.packages.map((p) => p.name)).toEqual(['conn-a', 'conn-b']);
+      expect(page2.packages.map((p) => p.name)).toEqual(['conn-c', 'conn-d']);
+      expect(page2.count).toBe(5);
+    });
+
+    it('should not re-fetch from Central when only the sort changes, and sort in memory', async () => {
+      serveCatalog();
+      await searchPackages(base);
+      expect(centralCalls()).toBe(2);
+
+      const desc = await searchPackages({ ...base, sort: 'name-desc' });
+      expect(centralCalls()).toBe(2);
+      expect(desc.packages.map((p) => p.name)).toEqual(['conn-e', 'conn-d']);
+
+      // The earlier sort must not have mutated the cached catalog.
+      const asc = await searchPackages(base);
+      expect(centralCalls()).toBe(2);
+      expect(asc.packages.map((p) => p.name)).toEqual(['conn-a', 'conn-b']);
+    });
+
+    it('should share one fetch between concurrent calls', async () => {
+      serveCatalog();
+      await Promise.all([searchPackages(base), searchPackages({ ...base, offset: 2 })]);
+      expect(centralCalls()).toBe(2);
+    });
+
+    it('should re-fetch when the query or a filter changes, but not for equivalent keys', async () => {
+      serveCatalog();
+      await searchPackages(base);
+      expect(centralCalls()).toBe(2);
+
+      await searchPackages({ ...base, query: 'conn-a' });
+      expect(centralCalls()).toBe(4);
+
+      await searchPackages({ ...base, areas: ['Integration'] });
+      expect(centralCalls()).toBe(6);
+
+      // Same key after normalisation: trimmed query, reordered multi-select values.
+      await searchPackages({ ...base, query: ' conn ' });
+      expect(centralCalls()).toBe(6);
+      await searchPackages({ ...base, query: undefined, areas: ['A', 'B'] });
+      const afterFirst = centralCalls();
+      await searchPackages({ ...base, query: undefined, areas: ['B', 'A'] });
+      expect(centralCalls()).toBe(afterFirst);
+    });
+
+    it('should retry on the next call after a failed fetch instead of reusing the failure', async () => {
+      // Real timers: withRetry's backoff is ~1s total (same as the existing retry test).
+      mockFetch.mockRejectedValue(new Error('network down'));
+      await expect(searchPackages(base)).rejects.toThrow();
+      const callsAfterFailure = centralCalls();
+      expect(callsAfterFailure).toBeGreaterThan(0);
+
+      serveCatalog();
+      const result = await searchPackages(base);
+      expect(centralCalls()).toBeGreaterThan(callsAfterFailure);
+      expect(result.count).toBe(5);
+    });
+  });
+
+  describe('single catalogue download on cold load', () => {
+    const CATALOG_SIZE = 1200; // 3 batches of 500
+    const catalog = Array.from({ length: CATALOG_SIZE }, (_, i) => ({
+      name: `pkg-${i}`,
+      version: '1.0.0',
+      keywords: [`Area/Area${i % 7}`, `Vendor/Vendor${i % 5}`, 'Type/Connector'],
+    }));
+    const HIDDEN_NAME = 'hidden-pkg-a';
+    const hiddenPackage = {
+      name: HIDDEN_NAME,
+      version: '1.0.0',
+      keywords: ['Area/HiddenArea', 'Vendor/HiddenVendor', 'Type/HiddenType'],
+    };
+    const fullCatalog = [...catalog, hiddenPackage];
+
+    const serveCatalog = () => {
+      mockFetch.mockImplementation(async (url: string) => {
+        if (!String(url).includes('offset=')) {
+          return { ok: true, json: () => Promise.resolve({ packages: {} }) };
+        }
+        const params = new URL(url, 'https://example.com').searchParams;
+        const offset = Number(params.get('offset'));
+        const limit = Number(params.get('limit'));
+        return {
+          ok: true,
+          json: () =>
+            Promise.resolve(
+              createMockApiResponse(
+                fullCatalog.slice(offset, offset + limit),
+                fullCatalog.length,
+                offset,
+                limit
+              )
+            ),
+        };
+      });
+    };
+    const centralLimits = () =>
+      mockFetch.mock.calls
+        .filter(([url]) => String(url).includes('offset='))
+        .map(([url]) => Number(new URL(String(url)).searchParams.get('limit')));
+    const countProbes = () => centralLimits().filter((limit) => limit === 1).length;
+    const batchRequests = () => centralLimits().filter((limit) => limit === 500).length;
+    const EXPECTED_BATCHES = Math.ceil(fullCatalog.length / 500);
+
+    beforeEach(async () => {
+      const { HIDDEN_PACKAGES } = await import('../connector-utils');
+      HIDDEN_PACKAGES.add(HIDDEN_NAME);
+    });
+
+    afterEach(async () => {
+      const { HIDDEN_PACKAGES } = await import('../connector-utils');
+      HIDDEN_PACKAGES.delete(HIDDEN_NAME);
+    });
+
+    it('should download the catalogue once when search and filters load together', async () => {
+      serveCatalog();
+      let resolveUpdate: () => void = () => {};
+      const updated = new Promise<void>((resolve) => {
+        resolveUpdate = resolve;
+      });
+
+      await Promise.all([
+        searchPackages({ offset: 0, limit: 30, sort: 'pullCount-desc' }),
+        fetchFiltersProgressively(undefined, () => resolveUpdate()),
+      ]);
+      await updated;
+
+      // One download = one count probe + the 500-row batches.
+      expect(countProbes()).toBe(1);
+      expect(batchRequests()).toBe(EXPECTED_BATCHES);
+      // The only other Central request is the fast path's own first page
+      // (limit + HIDDEN_PACKAGES.size rows) -- no 100-row filter loop.
+      expect(centralLimits()).toHaveLength(1 + EXPECTED_BATCHES + 1);
+    });
+
+    it('should share one download between getTotalHiddenCount and the catalogue', async () => {
+      serveCatalog();
+
+      // date-desc, no filters: fast path -> getTotalHiddenCount.
+      const fast = await searchPackages({ offset: 0, limit: 30, sort: 'date-desc' });
+      // pullCount-desc: full-fetch path -> fetchCatalog.
+      const full = await searchPackages({ offset: 0, limit: 30, sort: 'pullCount-desc' });
+
+      expect(countProbes()).toBe(1);
+      expect(batchRequests()).toBe(EXPECTED_BATCHES);
+      // Both paths agree on the visible total (hidden package excluded).
+      expect(fast.count).toBe(CATALOG_SIZE);
+      expect(full.count).toBe(CATALOG_SIZE);
+    });
+
+    it('should retry the download on the next call after a failure instead of caching it', async () => {
+      mockFetch.mockRejectedValue(new Error('network down'));
+      await expect(searchPackages({ offset: 0, limit: 30, sort: 'date-desc' })).rejects.toThrow();
+
+      // The fast path rejects as soon as its own request fails; let the
+      // hidden-count download's last retry settle before swapping the mock.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      serveCatalog();
+      mockFetch.mockClear();
+      const result = await searchPackages({ offset: 0, limit: 30, sort: 'date-desc' });
+
+      expect(result.count).toBe(CATALOG_SIZE);
+      expect(countProbes()).toBe(1);
+      expect(batchRequests()).toBe(EXPECTED_BATCHES);
+    }, 15000);
+
+    it('should build filter options from the single download, excluding hidden packages', async () => {
+      serveCatalog();
+      const { extractFilterOptions } = await import('../connector-utils');
+      const { fetchAllPackagesForFilters } = await import('./rest-client');
+
+      const filters = await fetchAllPackagesForFilters();
+
+      // What the old paginated loop produced: every visible package, fed to
+      // extractFilterOptions.
+      expect(filters).toEqual(
+        extractFilterOptions(createMockApiResponse(catalog, catalog.length).packages)
+      );
+      expect(filters.vendors).not.toContain('HiddenVendor');
+      expect(filters.areas).not.toContain('HiddenArea');
+      expect(filters.vendors).toHaveLength(5);
+      expect(filters.areas).toHaveLength(7);
+
+      expect(countProbes()).toBe(1);
+      expect(batchRequests()).toBe(EXPECTED_BATCHES);
+      expect(centralLimits()).toHaveLength(1 + EXPECTED_BATCHES);
+      expect(storageMock.setItem).toHaveBeenCalledWith(getFilterCacheKey(), expect.any(String));
     });
   });
 
