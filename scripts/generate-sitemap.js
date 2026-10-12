@@ -7,6 +7,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { clearPriorityCatalogue, writePriorityCatalogue } = require('./generate-priority-catalogue');
 
 // Check Node.js version and ensure fetch is available
 const nodeVersion = process.version;
@@ -163,6 +164,9 @@ function generateSitemap(urls) {
 }
 
 async function main() {
+  // Drop any previous priority catalogue first, so a failure below can't leave a stale one.
+  clearPriorityCatalogue();
+
   try {
     // Validate BASE_URL
     if (process.env.SITE_URL) {
@@ -176,6 +180,9 @@ async function main() {
       console.error('No packages found. Exiting.');
       process.exit(1);
     }
+
+    // Reuse this download for the priority catalogue; it never throws or fails the build.
+    writePriorityCatalogue(packages);
 
     // Generate sitemap
     console.log('Generating sitemap...');
@@ -204,4 +211,4 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { buildSitemapUrls, isHiddenPackage };
+module.exports = { buildSitemapUrls, isHiddenPackage, fetchAllPackages };
