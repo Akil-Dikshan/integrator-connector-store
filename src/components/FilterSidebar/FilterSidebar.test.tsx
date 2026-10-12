@@ -65,12 +65,7 @@ describe('FilterSidebar facet counts', () => {
     ]);
   });
 
-  const checkboxFor = (name: string) =>
-    within(screen.getByText(name).closest('label')!).getByRole('checkbox', {
-      hidden: true,
-    }) as HTMLInputElement;
-
-  it('keeps every option listed, in the usual order, and disables the ones with no results', () => {
+  it('hides options with no results and keeps the usual order', () => {
     renderSidebar({
       facetCounts: {
         areas: { AI: 1, Finance: 5 },
@@ -79,39 +74,47 @@ describe('FilterSidebar facet counts', () => {
       },
     });
 
-    expect(labels()).toEqual([
-      'AI',
-      'Finance',
-      'Health',
-      'Acme',
-      'Beta',
-      'Gamma',
-      'Connector',
-      'Library',
-    ]);
-    expect(checkboxFor('Health').disabled).toBe(true);
-    expect(checkboxFor('Beta').disabled).toBe(true);
-    expect(checkboxFor('Connector').disabled).toBe(true);
-    expect(checkboxFor('Finance').disabled).toBe(false);
-    expect(checkboxFor('Library').disabled).toBe(false);
+    expect(labels()).toEqual(['AI', 'Finance', 'Acme', 'Library']);
   });
 
-  it('leaves a selected option enabled even when it now has no results', () => {
+  it('keeps a selected option that now has no results so it can be unticked', () => {
     renderSidebar({
       selectedAreas: ['Health'],
       facetCounts: { areas: { Finance: 2 }, vendors: { Acme: 1 }, types: { Library: 1 } },
     });
 
-    expect(checkboxFor('Health').checked).toBe(true);
-    expect(checkboxFor('Health').disabled).toBe(false);
+    expect(labels().slice(0, 2)).toEqual(['Finance', 'Health']);
   });
 
-  it('keeps every section, with its expanded state, when nothing is available in it', () => {
-    renderSidebar({ facetCounts: { areas: { AI: 1 }, vendors: {}, types: {} } });
+  it('hides a section with nothing to choose, but keeps it mounted', () => {
+    const { container, rerender } = renderSidebar({
+      facetCounts: { areas: { AI: 1 }, vendors: {}, types: {} },
+    });
 
-    expect(screen.getByText('Area')).toBeTruthy();
-    expect(screen.getByText('Vendor')).toBeTruthy();
-    expect(screen.getByText('Type')).toBeTruthy();
+    const accordions = () => [...container.querySelectorAll('.MuiAccordion-root')] as HTMLElement[];
+    const vendor = accordions().find((a) => a.textContent?.startsWith('Vendor'))!;
+    expect(getComputedStyle(vendor).display).toBe('none');
+    expect(getComputedStyle(accordions()[0]).display).not.toBe('none');
+
+    // Options come back: the same section reappears, not a fresh one.
+    rerender(
+      <FilterSidebar
+        filterOptions={filterOptions}
+        facetCounts={{ areas: { AI: 1 }, vendors: { Acme: 1 }, types: {} }}
+        selectedAreas={[]}
+        selectedVendors={[]}
+        selectedTypes={[]}
+        searchQuery=""
+        onSearchChange={() => {}}
+        onAreaChange={() => {}}
+        onVendorChange={() => {}}
+        onTypeChange={() => {}}
+        onClearAll={() => {}}
+        effectiveMode="light"
+      />
+    );
+    expect(accordions().find((a) => a.textContent?.startsWith('Vendor'))).toBe(vendor);
+    expect(getComputedStyle(vendor).display).not.toBe('none');
   });
 
   it('shows how many options are selected in the section header', () => {
@@ -134,7 +137,7 @@ describe('FilterSidebar facet counts', () => {
       },
     });
 
-    expect(labels()).toHaveLength(3 + 30 + 2);
+    expect(labels()).toHaveLength(30);
     expect(screen.queryByText(/Show .*more/)).toBeNull();
   });
 

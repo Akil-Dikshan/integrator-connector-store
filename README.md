@@ -486,12 +486,12 @@ deprecated or removed after the build stays listed until the next build.
 
 ### Filter option counts
 
-With a priority list, the sidebar only lets you pick options that would leave results. `getFacetCounts`
+With a priority list, the sidebar only offers options that would leave results. `getFacetCounts`
 (`rest-client.ts`) counts, over the in-memory catalog, how many packages each Area/Vendor/Type option
 would give with the other selected filters and the search text applied (a category's own selection is
-left out, since values inside a category are OR'd). Options with no results are greyed out and can't be picked
-(a selected one stays enabled so it can be unticked); every option stays listed in its usual order in a scrollable
-list, so the sidebar doesn't change shape as filters change. It adds no Central call. Without a priority list every option is shown as before.
+left out, since values inside a category are OR'd). Options with no results are hidden (a selected one stays so it can be unticked),
+and a section with nothing left to choose is hidden too, but stays mounted so it keeps its expanded or collapsed
+state. Lists scroll, in their usual order. It adds no Central call. Without a priority list every option is shown as before.
 
 ### Filter Caching
 
