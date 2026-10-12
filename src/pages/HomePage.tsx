@@ -409,9 +409,14 @@ export default function HomePage() {
           setInitialLoading(false);
         }
       } catch (error) {
-        console.error('Failed to initialize:', error);
-        const errorMessage = error instanceof Error ? error.message : 'Failed to load filters.';
-        setError(errorMessage);
+        if (snapshotShownRef.current) {
+          // The catalogue cards are on screen; a filter-load failure is not worth an error.
+          console.warn('Failed to load filter options, keeping the saved catalogue:', error);
+        } else {
+          console.error('Failed to initialize:', error);
+          const errorMessage = error instanceof Error ? error.message : 'Failed to load filters.';
+          setError(errorMessage);
+        }
         if (!initialLoadingClearedRef.current) {
           skipInitialLoadingFetchRef.current = true;
           setInitialLoading(false);
@@ -454,6 +459,8 @@ export default function HomePage() {
       setConnectors(view.packages);
       setTotalCount(view.count);
       setLoading(false);
+      // An error from a request that failed before the cards arrived no longer applies.
+      setError(null);
       if (!initialLoadingClearedRef.current) {
         initialLoadingClearedRef.current = true;
         skipInitialLoadingFetchRef.current = true;

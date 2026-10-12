@@ -559,6 +559,67 @@ describe('HomePage with a priority catalogue', () => {
     expect(cardTexts()[0]).toBe('pkg10|snap10');
   });
 
+  it('does not show an error when the filter options fail to load while catalogue cards are on screen', async () => {
+    // Central unreachable: the live refresh and the filter options both fail. The
+    // distinct messages tell the two sources apart if an Alert ever appears.
+    const live = deferred<unknown>();
+    mockSearchPackages.mockReturnValue(live.promise);
+    mockFetchFiltersProgressively.mockRejectedValue(new Error('Filters unavailable'));
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    renderAt('/');
+    await waitFor(() => expect(screen.queryAllByTestId('card')).toHaveLength(30));
+
+    await act(async () => {
+      live.reject(new Error('Central is down'));
+    });
+    await waitFor(() => expect(mockFetchFiltersProgressively).toHaveBeenCalledTimes(1));
+    await act(async () => {});
+
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.queryAllByTestId('card')).toHaveLength(30);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('filter options'),
+      expect.objectContaining({ message: 'Filters unavailable' })
+    );
+    errorSpy.mockRestore();
+  });
+
+  it('clears an error raised before the catalogue arrived, once its cards are shown', async () => {
+    // Central fails fast, before the file lands: today's error path runs, and the
+    // catalogue then paints the cards. The stale Alert must not stay on top of them.
+    const file = deferred<unknown>();
+    mockFetch.mockReturnValue(file.promise);
+    mockSearchPackages.mockRejectedValue(new Error('Central is down'));
+    mockFetchFiltersProgressively.mockRejectedValue(new Error('Filters unavailable'));
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    renderAt('/');
+    await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument());
+
+    await act(async () => {
+      file.resolve({ ok: true, status: 200, json: async () => snapshotFile() });
+    });
+
+    await waitFor(() => expect(screen.queryAllByTestId('card')).toHaveLength(30));
+    expect(screen.queryByRole('alert')).toBeNull();
+    errorSpy.mockRestore();
+  });
+
+  it('still shows the error when the filter options fail and no catalogue cards are on screen', async () => {
+    mockFetch.mockResolvedValue({ ok: false, status: 404, json: async () => ({}) });
+    mockSearchPackages.mockResolvedValue({
+      packages: livePage(0, 30),
+      count: SNAPSHOT_SIZE,
+      offset: 0,
+      limit: 30,
+    });
+    mockFetchFiltersProgressively.mockRejectedValue(new Error('Filters unavailable'));
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    renderAt('/');
+
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Filters unavailable'));
+    errorSpy.mockRestore();
+  });
+
   it('renders synchronously on mount when the file is already loaded', async () => {
     await loadPriorityCatalogue();
     mockSearchPackages.mockReturnValue(new Promise(() => undefined));
