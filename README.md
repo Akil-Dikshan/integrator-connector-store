@@ -454,26 +454,26 @@ Results: Merged and deduplicated
 graphql AND org:ballerinax AND keyword:Area/Database
 ```
 
-### Priority List (build-time catalog)
+### Priority Catalogue (build-time catalog)
 
 Fetching the whole Ballerina Central catalog in the browser takes 10-30 s, so the build does it once.
-`scripts/generate-priority-list.js` (run by `npm run build` through `scripts/prebuild.sh`, or on demand with
-`npm run generate-priority-list`) fetches every package, drops hidden and deprecated ones, orders the rest by
-`ranking-data.json`, and writes `public/priority-list.json` with the card data the store renders. Copies of
+`scripts/generate-priority-catalogue.js` (run by `npm run build` through `scripts/prebuild.sh`, or on demand with
+`npm run generate-priority`) fetches every package, drops hidden and deprecated ones, orders the rest by
+`ranking-data.json`, and writes `public/priority-catalogue.json` with the card data the store renders. Copies of
 `hidden-packages.json` and `deprecated-packages.json` are committed in `public/` for other tools; they are not
 generated, and a test fails if they drift from the files in `src/lib/connector-utils/`, so update both together.
 
 The list drives what the store renders, so **the build fails if it can't be generated** (Central unreachable, or
 fewer packages than Central reports). For a build that can't reach Central on purpose, set
-`SKIP_PRIORITY_LIST=true`: no list is generated and the store falls back to querying Central directly.
-`priority-list.json` is a build output and is git-ignored; the deployed site serves it at `/priority-list.json`,
+`SKIP_PRIORITY_CATALOGUE=true`: no list is generated and the store falls back to querying Central directly.
+`priority-catalogue.json` is a build output and is git-ignored; the deployed site serves it at `/priority-catalogue.json`,
 which is the copy to inspect when debugging.
 
 At runtime (`src/lib/rest-client/rest-client.ts`):
 
 | View                                        | Source                                                                                |
 | ------------------------------------------- | ------------------------------------------------------------------------------------- |
-| Unfiltered view, any sort, Type-only filter | the priority list, no Central call                                                    |
+| Unfiltered view, any sort, Type-only filter | the priority catalogue, no Central call                                                    |
 | Vendor/Area filter, text search             | one Central request (`limit=500`), re-checked exactly on the client                   |
 | Vendor list                                 | derived from the list's `Vendor/` tags                                                |
 | Packages released after the build           | live requests for packages created since the build date, merged after the ranked ones |
@@ -486,12 +486,12 @@ deprecated or removed after the build stays listed until the next build.
 
 ### Filter option counts
 
-With a priority list, the sidebar only offers options that would leave results. `getFacetCounts`
+With a priority catalogue, the sidebar only offers options that would leave results. `getFacetCounts`
 (`rest-client.ts`) counts, over the in-memory catalog, how many packages each Area/Vendor/Type option
 would give with the other selected filters and the search text applied (a category's own selection is
 left out, since values inside a category are OR'd). Options with no results are hidden (a selected one stays so it can be unticked),
 and a section with nothing left to choose is hidden too, but stays mounted so it keeps its expanded or collapsed
-state. Lists scroll, in their usual order. It adds no Central call. Without a priority list every option is shown as before.
+state. Lists scroll, in their usual order. It adds no Central call. Without a priority catalogue every option is shown as before.
 
 ### Filter Caching
 

@@ -25,7 +25,11 @@ import {
   isHiddenPackage,
 } from '../connector-utils';
 import semver from 'semver';
-import { loadPriorityList, PriorityList, PriorityListPackage } from '../priority-list';
+import {
+  loadPriorityCatalogue,
+  PriorityCatalogue,
+  PriorityCatalogueCard,
+} from '../priority-catalogue';
 
 // Shape of each entry in ranking-data.json (see scripts/generate-ranking-data.js).
 // Precomputed, build-time download-rate ranking -- see that script for the full
@@ -632,38 +636,161 @@ async function fetchAllForCombination(combo: SearchParams): Promise<BallerinaPac
 }
 
 /**
- * Exact hidden-package count per org scope, computed once by fetching the full
- * unfiltered catalog and cached for the session (in-flight promises are cached
- * too, so concurrent page loads share one fetch). The fast path in searchPackages
- * below used to estimate this proportionally from each page's own local sample,
- * which gave a different (and visibly inconsistent) total depending on which page
- * happened to be requested — see https://github.com/wso2/product-integrator/issues/2552.
+ * The raw, unfiltered catalog per org scope, downloaded once (500-row
+ * batches) and shared by everything that needs the whole catalog on a cold load: the
+ * unfiltered full-fetch path (fetchCatalog), the exact hidden-package count
+ * (getTotalHiddenCount) and the filter options (fetchAllPackagesForFilters). In-flight
+ * promises are cached too so concurrent callers share one download, and a failed
+ * download evicts its own entry so the next call retries.
+ *
+ * The cached array is shared: callers must treat it as read-only.
  */
-const hiddenCountCache = new Map<string, Promise<number>>();
+const RAW_CATALOG_TTL = 12 * 60 * 1000; // 12 minutes
+interface RawCatalogEntry {
+  promise: Promise<BallerinaPackage[]>;
+  timestamp: number;
+}
+const rawCatalogCache = new Map<string, RawCatalogEntry>();
 
-/** Test-only: clears the in-memory hidden-count cache so test cases don't leak state. */
-export function __resetHiddenCountCacheForTests(): void {
-  hiddenCountCache.clear();
+function getRawCatalog(orgName?: string): Promise<BallerinaPackage[]> {
+  const cacheKey = orgName ?? 'all';
+  const cached = rawCatalogCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < RAW_CATALOG_TTL) {
+    return cached.promise;
+  }
+
+  const entry: RawCatalogEntry = {
+    promise: fetchAllForCombination({
+      orgName,
+      offset: 0,
+      limit: 1,
+      sort: 'pullCount-desc',
+    }).catch((error) => {
+      // Evict on failure (only if still ours) so the next call retries instead of
+      // reusing a rejected promise; the error still propagates to current callers.
+      if (rawCatalogCache.get(cacheKey) === entry) {
+        rawCatalogCache.delete(cacheKey);
+      }
+      throw error;
+    }),
+    timestamp: Date.now(),
+  };
+  rawCatalogCache.set(cacheKey, entry);
+  return entry.promise;
 }
 
-async function getTotalHiddenCount(orgName?: string): Promise<number> {
-  const cacheKey = orgName ?? 'all';
-  const cached = hiddenCountCache.get(cacheKey);
-  if (cached) return cached;
-
-  const promise = fetchAllForCombination({
-    orgName,
-    offset: 0,
-    limit: 1,
-    sort: 'pullCount-desc',
-  }).then((packages) => packages.filter((pkg) => isHiddenPackage(pkg)).length);
-
-  hiddenCountCache.set(cacheKey, promise);
-  return promise;
+/** Test-only: clears the in-memory raw-catalog cache so test cases don't leak state. */
+export function __resetHiddenCountCacheForTests(): void {
+  rawCatalogCache.clear();
 }
 
 /**
- * The priority list (built by scripts/generate-priority-list.js) plus whatever Central
+ * Exact hidden-package count per org scope, derived from the shared raw catalog.
+ * The fast path in searchPackages below used to estimate this proportionally from
+ * each page's own local sample, which gave a different (and visibly inconsistent)
+ * total depending on which page happened to be requested — see
+ * https://github.com/wso2/product-integrator/issues/2552.
+ */
+async function getTotalHiddenCount(orgName?: string): Promise<number> {
+  const packages = await getRawCatalog(orgName);
+  return packages.filter((pkg) => isHiddenPackage(pkg)).length;
+}
+
+/**
+ * Session cache for the full-fetch path in searchPackages. Every page click, sort
+ * change and re-render re-enters searchPackages with the same filters, and without
+ * this each one re-ran the entire count + 500-item-batch fetch just to slice a
+ * different page. The cached value is the merged/deduped/filtered catalog, keyed by
+ * what actually changes Central's request (query, areas, vendors, types, orgName) --
+ * deliberately NOT by sort/offset/limit, which are applied in memory per call.
+ * In-flight promises are cached too so concurrent callers share one fetch, and a
+ * failed fetch evicts its own entry so the next call retries.
+ *
+ * The cached array is shared: callers must treat it as read-only (copy before sorting).
+ */
+const FETCHED_CATALOG_TTL = 12 * 60 * 1000; // 12 minutes
+interface FetchedCatalogEntry {
+  promise: Promise<BallerinaPackage[]>;
+  timestamp: number;
+}
+const fetchedCatalogCache = new Map<string, FetchedCatalogEntry>();
+
+/** Test-only: clears the in-memory fetched-catalog cache so test cases don't leak state. */
+export function __resetFetchedCatalogCacheForTests(): void {
+  fetchedCatalogCache.clear();
+  rawCatalogCache.clear();
+}
+
+function getFetchedCatalogCacheKey(params: SearchParams): string {
+  const sortedCopy = (values?: string[]) => [...(values ?? [])].sort();
+  return JSON.stringify([
+    params.orgName ?? 'all',
+    (params.query ?? '').trim(),
+    sortedCopy(params.areas),
+    sortedCopy(params.vendors),
+    sortedCopy(params.types),
+  ]);
+}
+
+async function fetchCatalog(params: SearchParams): Promise<BallerinaPackage[]> {
+  // Sort is pinned for the fetch itself so the cached order (which breaks ties in
+  // the per-call in-memory sort) doesn't depend on whichever sort happened to load first.
+  const hasFilters = !!(
+    params.query?.trim() ||
+    params.areas?.length ||
+    params.vendors?.length ||
+    params.types?.length
+  );
+  // Unfiltered: reuse the shared raw download instead of fetching it again.
+  const perComboPackages = hasFilters
+    ? await Promise.all(
+        generateFilterCombinations({ ...params, sort: 'pullCount-desc' }).map(
+          fetchAllForCombination
+        )
+      )
+    : [await getRawCatalog(params.orgName)];
+
+  // Merge and deduplicate by name-version (combinations can overlap)
+  const packageMap = new Map<string, BallerinaPackage>();
+  perComboPackages.flat().forEach((pkg) => {
+    const key = `${pkg.name}-${pkg.version}`;
+    if (!packageMap.has(key)) {
+      packageMap.set(key, pkg);
+    }
+  });
+  const merged = Array.from(packageMap.values());
+
+  // filterByExactKeywords uses the original params (not a single combo) so OR
+  // semantics across multi-select values are preserved.
+  const visible = excludeHidden(merged);
+  const exactMatches = filterByExactKeywords(visible, params);
+  return filterByRelevance(exactMatches, params.query);
+}
+
+function getFetchedCatalog(params: SearchParams): Promise<BallerinaPackage[]> {
+  const cacheKey = getFetchedCatalogCacheKey(params);
+  const cached = fetchedCatalogCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < FETCHED_CATALOG_TTL) {
+    return cached.promise;
+  }
+
+  const entry: FetchedCatalogEntry = {
+    promise: fetchCatalog(params).catch((error) => {
+      // Evict on failure (only if still ours) so the next call retries instead of
+      // reusing a rejected promise; the error still propagates to current callers.
+      if (fetchedCatalogCache.get(cacheKey) === entry) {
+        fetchedCatalogCache.delete(cacheKey);
+      }
+      throw error;
+    }),
+    timestamp: Date.now(),
+  };
+  fetchedCatalogCache.set(cacheKey, entry);
+  return entry.promise;
+}
+
+/**
+ * The priority catalogue (built by scripts/generate-priority-catalogue.js) plus whatever Central
  * says was released or updated since that build.
  *
  * The list holds every visible package with its card data, so unfiltered views render
@@ -683,7 +810,7 @@ const RECENT_BUILD_SLACK = 24 * 60 * 60 * 1000;
 const RECENT_TTL = 10 * 60 * 1000; // 10 minutes
 
 interface Catalog {
-  packages: PriorityListPackage[];
+  packages: PriorityCatalogueCard[];
   /** Ranking lookup in the shape sortMergedPackages expects, derived from the list. */
   ranking: Record<string, RankingEntry>;
   /** Identifies which new/updated packages are merged in, to detect changes. */
@@ -697,7 +824,7 @@ let recentFetchedAt = 0;
 /** Signature of the catalog the last searchPackages call served, to tell what a re-render adds. */
 let servedSignature: string | null = null;
 let catalogVersion = 0;
-let catalogCache: { version: number; base: PriorityList; catalog: Catalog } | null = null;
+let catalogCache: { version: number; base: PriorityCatalogue; catalog: Catalog } | null = null;
 
 /** Test-only: forgets the live "recent packages" state so test cases don't leak state. */
 export function __resetCatalogForTests(): void {
@@ -725,7 +852,7 @@ function toMillis(value: unknown): number {
  * only when that page is still entirely newer than the build reads the rest in parallel,
  * up to RECENT_MAX_PACKAGES. Without a usable build date it reads the first page only.
  */
-async function fetchRecentPackages(base: PriorityList): Promise<BallerinaPackage[]> {
+async function fetchRecentPackages(base: PriorityCatalogue): Promise<BallerinaPackage[]> {
   const page = (offset: number) =>
     executeSingleSearch({ offset, limit: RECENT_PAGE_SIZE, sort: 'date-desc' });
   const since = toMillis(base.generatedAt) - RECENT_BUILD_SLACK;
@@ -748,7 +875,7 @@ async function fetchRecentPackages(base: PriorityList): Promise<BallerinaPackage
   const packages = [first, ...rest].flatMap((response) => response.packages);
   if (!reachesBuild(packages)) {
     console.warn(
-      `More than ${RECENT_MAX_PACKAGES} packages changed since the priority list was built ` +
+      `More than ${RECENT_MAX_PACKAGES} packages changed since the priority catalogue was built ` +
         `(${base.generatedAt}); some are not shown. Rebuild the store.`
     );
   }
@@ -756,7 +883,7 @@ async function fetchRecentPackages(base: PriorityList): Promise<BallerinaPackage
 }
 
 /** Starts (or reuses) the live fetch of packages released since the build. Never rejects. */
-function ensureRecent(base: PriorityList): Promise<void> {
+function ensureRecent(base: PriorityCatalogue): Promise<void> {
   if (recentPromise && (recentInFlight || Date.now() - recentFetchedAt < RECENT_TTL)) {
     return recentPromise;
   }
@@ -767,7 +894,7 @@ function ensureRecent(base: PriorityList): Promise<void> {
       catalogVersion++;
     })
     .catch((error) => {
-      // Keep whatever we had: the priority list alone is still a correct catalog.
+      // Keep whatever we had: the priority catalogue alone is still a correct catalog.
       console.warn('Could not check Ballerina Central for new packages:', error);
     })
     .finally(() => {
@@ -777,10 +904,10 @@ function ensureRecent(base: PriorityList): Promise<void> {
   return recentPromise;
 }
 
-function buildCatalog(base: PriorityList): Catalog {
+function buildCatalog(base: PriorityCatalogue): Catalog {
   // Map insertion order is the display order: ranked list first, new packages last.
   // Replacing an existing key keeps its position.
-  const byKey = new Map<string, PriorityListPackage>();
+  const byKey = new Map<string, PriorityCatalogueCard>();
   base.packages.forEach((pkg) => byKey.set(packageKey(pkg), pkg));
 
   const changes: string[] = [];
@@ -813,7 +940,7 @@ function buildCatalog(base: PriorityList): Catalog {
   return { packages, ranking, signature: changes.join(',') };
 }
 
-function getCatalog(base: PriorityList): Catalog {
+function getCatalog(base: PriorityCatalogue): Catalog {
   if (!catalogCache || catalogCache.version !== catalogVersion || catalogCache.base !== base) {
     catalogCache = { version: catalogVersion, base, catalog: buildCatalog(base) };
   }
@@ -825,11 +952,11 @@ function getCatalog(base: PriorityList): Catalog {
  * something the last searchPackages call did not serve (a package was added or got a
  * newer version). Comparing with what was served, not with the catalog as it stood when
  * this was called, means a live check that finished first is still reported. Resolves
- * false when there is no priority list, or nothing changed, so callers only re-render
+ * false when there is no priority catalogue, or nothing changed, so callers only re-render
  * when they need to.
  */
 export async function refreshCatalog(): Promise<boolean> {
-  const base = await loadPriorityList();
+  const base = await loadPriorityCatalogue();
   if (!base) return false;
   const served = servedSignature ?? getCatalog(base).signature;
   await ensureRecent(base);
@@ -850,14 +977,14 @@ export interface FacetCounts {
  * text query applied, so an option is 0 exactly when picking it would give no results.
  *
  * Runs over the in-memory catalog (a few ms, no Central call). Resolves null when there
- * is no priority list (or an org-scoped view), in which case the sidebar shows every
+ * is no priority catalogue (or an org-scoped view), in which case the sidebar shows every
  * option as before. With a text query the counts use the same name/keyword match as the
  * result list but not Central's own matching, so they can differ by a package or two.
  */
 export async function getFacetCounts(
   params: Pick<SearchParams, 'query' | 'areas' | 'vendors' | 'types' | 'orgName'>
 ): Promise<FacetCounts | null> {
-  const base = params.orgName ? null : await loadPriorityList();
+  const base = params.orgName ? null : await loadPriorityCatalogue();
   if (!base) return null;
 
   const matching = filterByRelevance(getCatalog(base).packages, params.query);
@@ -900,13 +1027,13 @@ function searchCatalog(catalog: Catalog, params: SearchParams): SearchResponse {
 /**
  * Search packages with server-side filtering, sorting, and pagination.
  *
- * With a priority list, unfiltered views and Type-only filters come straight from it.
+ * With a priority catalogue, unfiltered views and Type-only filters come straight from it.
  * Text search and Area/Vendor filters still query Central (the result sets are small),
- * then are re-checked exactly on the client. Without a priority list everything goes
+ * then are re-checked exactly on the client. Without a priority catalogue everything goes
  * to Central as before.
  */
 export async function searchPackages(params: SearchParams): Promise<SearchResponse> {
-  const base = params.orgName ? null : await loadPriorityList();
+  const base = params.orgName ? null : await loadPriorityCatalogue();
   if (!base) return searchCentral(params);
 
   void ensureRecent(base);
@@ -960,28 +1087,13 @@ async function searchCentral(
     hasKeywordFilters;
 
   if (needsFullFetch) {
-    const perComboPackages = await Promise.all(combinations.map(fetchAllForCombination));
-
-    // Merge and deduplicate by name-version (combinations can overlap)
-    const packageMap = new Map<string, BallerinaPackage>();
-    perComboPackages.flat().forEach((pkg) => {
-      const key = `${pkg.name}-${pkg.version}`;
-      if (!packageMap.has(key)) {
-        packageMap.set(key, pkg);
-      }
-    });
-    const merged = Array.from(packageMap.values());
-
-    // filterByExactKeywords uses the original params (not a single combo) so OR
-    // semantics across multi-select values are preserved.
-    const visible = excludeHidden(merged);
-    const exactMatches = filterByExactKeywords(visible, params);
-    const filtered = filterByRelevance(exactMatches, params.query);
+    const filtered = await getFetchedCatalog(params);
     // Only pullCount-desc actually reads ranking data -- skip the fetch
     // entirely for every other sort to avoid an unnecessary network request.
     const rankingData =
       params.sort === 'pullCount-desc' ? (catalogRanking ?? (await loadRankingData())) : {};
-    const sorted = sortMergedPackages(filtered, params.sort, params.query, rankingData);
+    // Copy: the cached catalog is shared and must never be sorted/mutated in place.
+    const sorted = sortMergedPackages([...filtered], params.sort, params.query, rankingData);
     const paged = sorted.slice(params.offset, params.offset + params.limit);
     return {
       packages: paged,
@@ -1082,31 +1194,13 @@ export async function fetchAllPackagesForFilters(orgName?: string): Promise<Filt
     return cached;
   }
 
-  const batchSize = 100;
+  // Built from the shared raw catalog download (already in flight or cached when
+  // fetchFiltersProgressively ran), not from a loop of 100-row searches.
   let allPackages: BallerinaPackage[] = [];
-  let offset = 0;
-  let hasMore = true;
-
-  // Fetch all packages in batches
-  while (hasMore) {
-    try {
-      const response = await searchPackages({
-        offset,
-        limit: batchSize,
-        sort: 'date-desc',
-        orgName,
-        skipFullFetch: true,
-      });
-
-      allPackages = [...allPackages, ...response.packages];
-      offset += batchSize;
-
-      // Check if we've fetched everything
-      hasMore = offset < response.count;
-    } catch (error) {
-      console.error(`Failed to fetch batch at offset ${offset}:`, error);
-      break;
-    }
+  try {
+    allPackages = excludeHidden(await getRawCatalog(orgName));
+  } catch (error) {
+    console.error('Failed to fetch catalog for filters:', error);
   }
 
   // Extract filter options
@@ -1183,10 +1277,10 @@ export async function fetchFiltersProgressively(
   orgName?: string,
   onUpdate?: (filters: FilterOptions) => void
 ): Promise<FilterOptions> {
-  // With a priority list the vendors come straight from its packages' tags: no
+  // With a priority catalogue the vendors come straight from its packages' tags: no
   // Central call and no localStorage. Vendors of packages released since the build
   // are added when the live check for new packages lands.
-  const base = orgName ? null : await loadPriorityList();
+  const base = orgName ? null : await loadPriorityCatalogue();
   if (base) {
     void ensureRecent(base);
     if (onUpdate) {

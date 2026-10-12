@@ -6,5 +6,5 @@
 echo "Generating sitemap.xml..."
 node scripts/generate-sitemap.js
 
-echo "Generating priority-list.json..."
-node scripts/generate-priority-list.js || exit 1
+echo "Generating priority-catalogue.json..."
+node scripts/generate-priority-catalogue.js || exit 1

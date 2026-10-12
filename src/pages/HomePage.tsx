@@ -184,7 +184,7 @@ export default function HomePage() {
   const setFilterOptions = (filters: FilterOptions) => {
     setFilterOptionsState({ ...filters, areas: predefinedAreas, types: predefinedTypes });
   };
-  // How many results each filter option would give; null until known (or with no priority list)
+  // How many results each filter option would give; null until known (or with no priority catalogue)
   const [facetCounts, setFacetCounts] = useState<FacetCounts | null>(null);
   // Bumped when the live check changes the catalog, so the counts are recomputed
   const [catalogRevision, setCatalogRevision] = useState(0);

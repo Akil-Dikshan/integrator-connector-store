@@ -25,6 +25,9 @@ yarn-error.log*
 # Local env files
 .env*.local
 
+# Generated at build time by scripts/generate-priority-catalogue.js
+public/priority-catalogue.json
+
 # Config files (use deployment environment config)
 public/config.js
 
@@ -37,5 +40,3 @@ next-env.d.ts
 
 *-audit-report/
 
-# Generated at build time by scripts/generate-priority-list.js
-public/priority-list.json
