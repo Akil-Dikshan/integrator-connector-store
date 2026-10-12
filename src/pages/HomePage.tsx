@@ -418,13 +418,15 @@ export default function HomePage() {
 
     const params = new URLSearchParams();
 
-    if (currentPage > 1) params.set('page', currentPage.toString());
-    if (pageSize !== 30) params.set('size', pageSize.toString());
+    // Filters first, then sort and paging, so the URL reads naturally
+    // (?areas=Finance&page=3) and a shared link keeps the same shape.
     if (debouncedQuery) params.set('search', debouncedQuery);
     if (selectedAreas.length > 0) params.set('areas', selectedAreas.join(','));
     if (selectedVendors.length > 0) params.set('vendors', selectedVendors.join(','));
     if (selectedTypes.length > 0) params.set('types', selectedTypes.join(','));
     if (sortBy !== 'pullCount-desc') params.set('sort', sortBy);
+    if (pageSize !== 30) params.set('size', pageSize.toString());
+    if (currentPage > 1) params.set('page', currentPage.toString());
 
     const newParamsString = params.toString();
     const currentParamsString = searchParams.toString();
