@@ -55,9 +55,9 @@ jest.mock('@/components/SelectedFilters', () => () => null);
 const mockSearchPackages = searchPackages as jest.Mock;
 const mockFetchFiltersProgressively = fetchFiltersProgressively as jest.Mock;
 
-const renderHome = async () => {
+const renderHome = async (entry = '/') => {
   const router = createMemoryRouter([{ path: '*', element: <HomePage /> }], {
-    initialEntries: ['/'],
+    initialEntries: [entry],
   });
   render(<RouterProvider router={router} />);
   await waitFor(() => {
@@ -101,6 +101,18 @@ describe('HomePage browser history', () => {
 
     await waitFor(() => {
       expect(router.state.location.search).toBe('?page=2');
+    });
+  });
+
+  it('puts the page parameter after the filters in the URL', async () => {
+    const router = await renderHome('/?areas=Finance+%26+Accounting&sort=date-desc');
+
+    fireEvent.click(screen.getAllByText('go-page-3')[0]);
+
+    await waitFor(() => {
+      expect(router.state.location.search).toBe(
+        '?areas=Finance+%26+Accounting&sort=date-desc&page=3'
+      );
     });
   });
 
