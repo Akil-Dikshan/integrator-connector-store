@@ -46,12 +46,21 @@ const renderSidebar = (props: Partial<React.ComponentProps<typeof FilterSidebar>
     />
   );
 
+// Vendor and Type start collapsed and keep no options in the DOM until opened.
+const expandAll = () => {
+  ['Vendor', 'Type'].forEach((title) => {
+    const header = screen.queryByText(title);
+    if (header) fireEvent.click(header);
+  });
+};
+
 const labels = () =>
   screen.getAllByRole('checkbox', { hidden: true }).map((c) => c.closest('label')!.textContent);
 
 describe('FilterSidebar facet counts', () => {
   it('lists every option, without counts, when counts are unknown', () => {
     renderSidebar({ facetCounts: null });
+    expandAll();
 
     expect(labels()).toEqual([
       'AI',
@@ -73,8 +82,19 @@ describe('FilterSidebar facet counts', () => {
         types: { Library: 3 },
       },
     });
+    expandAll();
 
     expect(labels()).toEqual(['AI', 'Finance', 'Acme', 'Library']);
+  });
+
+  it('keeps no options in the DOM while Vendor and Type are collapsed', () => {
+    renderSidebar({ facetCounts: null });
+
+    // Only Area, which starts open.
+    expect(labels()).toEqual(['AI', 'Finance', 'Health']);
+
+    expandAll();
+    expect(labels()).toHaveLength(3 + 3 + 2);
   });
 
   it('keeps a selected option that now has no results so it can be unticked', () => {
@@ -136,6 +156,7 @@ describe('FilterSidebar facet counts', () => {
         types: {},
       },
     });
+    expandAll();
 
     expect(labels()).toHaveLength(30);
     expect(screen.queryByText(/Show .*more/)).toBeNull();

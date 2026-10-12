@@ -98,6 +98,9 @@ function FilterSection({
       expanded={expanded}
       onChange={() => setExpanded(!expanded)}
       disableGutters
+      // A collapsed section keeps none of its options in the DOM. Vendor alone has ~200, and
+      // every one is re-rendered (and restyled) on each theme switch otherwise.
+      slotProps={{ transition: { unmountOnExit: true } }}
       sx={{
         display: empty ? 'none' : undefined,
         bgcolor: effectiveMode === 'dark' ? 'rgba(39, 39, 46, 0.5)' : '#F9FAFB',
