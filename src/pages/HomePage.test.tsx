@@ -519,20 +519,198 @@ describe('HomePage with a priority catalogue', () => {
     expect(screen.getAllByTestId('card')[2]).toBe(before[2]);
   });
 
-  it('shows the spinner when the user changes page before live data lands', async () => {
-    const live = deferred<unknown>();
-    mockSearchPackages.mockReturnValue(live.promise);
+  it('shows the spinner when the user changes page and the catalogue is not loaded', async () => {
+    // No catalogue (404) and the first live fetch failed, so the page is interactive
+    // with nothing to serve a slice from: today's path applies.
+    mockFetch.mockResolvedValue({ ok: false, status: 404, json: async () => ({}) });
+    const second = deferred<unknown>();
+    mockSearchPackages
+      .mockRejectedValueOnce(new Error('Central is down'))
+      .mockReturnValueOnce(second.promise);
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
     const router = renderAt('/?size=10');
-    await waitFor(() => expect(screen.queryAllByTestId('card')).toHaveLength(10));
-    expect(screen.queryByRole('progressbar')).toBeNull();
+    await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument());
 
     await act(async () => {
       await router.navigate('/?size=10&page=2');
     });
 
-    // Page 2 is not what the snapshot slice on screen is for: today's path applies.
     await waitFor(() => expect(screen.getByRole('progressbar')).toBeInTheDocument());
     expect(screen.queryAllByTestId('card')).toHaveLength(0);
+    errorSpy.mockRestore();
+  });
+
+  it('serves a page change from the catalogue before live data lands, without a spinner', async () => {
+    const live = deferred<unknown>();
+    const page2 = deferred<unknown>();
+    mockSearchPackages.mockReturnValueOnce(live.promise).mockReturnValueOnce(page2.promise);
+    const router = renderAt('/?size=10');
+    await waitFor(() => expect(screen.queryAllByTestId('card')).toHaveLength(10));
+
+    await act(async () => {
+      await router.navigate('/?size=10&page=2');
+    });
+
+    // Page 2 comes straight from the catalogue; the live request is still pending.
+    await waitFor(() => expect(cardTexts()[0]).toBe('pkg10|snap10'));
+    expect(screen.queryAllByTestId('card')).toHaveLength(10);
+    expect(screen.queryByRole('progressbar')).toBeNull();
+    expect(mockSearchPackages).toHaveBeenCalledTimes(2);
+    expect(mockSearchPackages.mock.calls[1][0].offset).toBe(10);
+
+    // ...and the live page 2 then merges in place.
+    const before = screen.getAllByTestId('card');
+    await act(async () => {
+      page2.resolve({
+        packages: livePage(10, 20, { 12: { summary: 'fresh12' } }),
+        count: SNAPSHOT_SIZE,
+        offset: 10,
+        limit: 10,
+      });
+    });
+    await waitFor(() => expect(cardTexts()[2]).toBe('pkg12|fresh12'));
+    screen.getAllByTestId('card').forEach((node, i) => expect(node).toBe(before[i]));
+  });
+
+  it('serves a page-size change from the catalogue before live data lands', async () => {
+    mockSearchPackages.mockReturnValue(new Promise(() => undefined));
+    const router = renderAt('/?size=10');
+    await waitFor(() => expect(screen.queryAllByTestId('card')).toHaveLength(10));
+
+    await act(async () => {
+      await router.navigate('/?size=50');
+    });
+
+    await waitFor(() => expect(screen.queryAllByTestId('card')).toHaveLength(50));
+    expect(screen.queryByRole('progressbar')).toBeNull();
+  });
+
+  it('drops the response of an earlier page when the user moves on quickly', async () => {
+    const first = deferred<unknown>();
+    const page2 = deferred<unknown>();
+    const page3 = deferred<unknown>();
+    mockSearchPackages
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(page2.promise)
+      .mockReturnValueOnce(page3.promise);
+    const router = renderAt('/?size=10');
+    await waitFor(() => expect(screen.queryAllByTestId('card')).toHaveLength(10));
+
+    await act(async () => {
+      await router.navigate('/?size=10&page=2');
+    });
+    await waitFor(() => expect(cardTexts()[0]).toBe('pkg10|snap10'));
+    await act(async () => {
+      await router.navigate('/?size=10&page=3');
+    });
+    await waitFor(() => expect(cardTexts()[0]).toBe('pkg20|snap20'));
+    expect(mockSearchPackages).toHaveBeenCalledTimes(3);
+
+    // The page-2 response arrives late and must not touch the page-3 cards.
+    await act(async () => {
+      page2.resolve({
+        packages: livePage(10, 20, { 10: { summary: 'stale10' } }),
+        count: SNAPSHOT_SIZE,
+        offset: 10,
+        limit: 10,
+      });
+    });
+    expect(cardTexts()[0]).toBe('pkg20|snap20');
+    expect(screen.queryByRole('progressbar')).toBeNull();
+
+    await act(async () => {
+      page3.resolve({
+        packages: livePage(20, 30, { 20: { summary: 'fresh20' } }),
+        count: SNAPSHOT_SIZE,
+        offset: 20,
+        limit: 10,
+      });
+    });
+    await waitFor(() => expect(cardTexts()[0]).toBe('pkg20|fresh20'));
+    expect(screen.queryAllByTestId('card')).toHaveLength(10);
+  });
+
+  it('falls back to the normal path for a page beyond the catalogue', async () => {
+    const second = deferred<unknown>();
+    mockSearchPackages
+      .mockReturnValueOnce(new Promise(() => undefined))
+      .mockReturnValueOnce(second.promise);
+    const router = renderAt('/?size=10');
+    await waitFor(() => expect(screen.queryAllByTestId('card')).toHaveLength(10));
+
+    await act(async () => {
+      await router.navigate('/?size=10&page=99');
+    });
+
+    await waitFor(() => expect(screen.getByRole('progressbar')).toBeInTheDocument());
+    expect(screen.queryAllByTestId('card')).toHaveLength(0);
+  });
+
+  it('uses the normal path for a page change once live data has landed', async () => {
+    const second = deferred<unknown>();
+    mockSearchPackages
+      .mockResolvedValueOnce({
+        packages: livePage(0, 10),
+        count: SNAPSHOT_SIZE,
+        offset: 0,
+        limit: 10,
+      })
+      .mockReturnValueOnce(second.promise);
+    const router = renderAt('/?size=10');
+    await waitFor(() => expect(mockFetchFiltersProgressively).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.queryAllByTestId('card')).toHaveLength(10));
+    await act(async () => {});
+
+    await act(async () => {
+      await router.navigate('/?size=10&page=2');
+    });
+
+    // Cached path as today: spinner while the request is pending, no catalogue slice.
+    await waitFor(() => expect(screen.getByRole('progressbar')).toBeInTheDocument());
+    expect(screen.queryAllByTestId('card')).toHaveLength(0);
+
+    await act(async () => {
+      second.resolve({
+        packages: livePage(10, 20),
+        count: SNAPSHOT_SIZE,
+        offset: 10,
+        limit: 10,
+      });
+    });
+    await waitFor(() => expect(cardTexts()[0]).toBe('pkg10|snap10'));
+  });
+
+  it('uses the normal path for a search before live data lands, and a stale slice never overwrites it', async () => {
+    const first = deferred<unknown>();
+    const search = deferred<unknown>();
+    mockSearchPackages.mockReturnValueOnce(first.promise).mockReturnValueOnce(search.promise);
+    const router = renderAt('/?size=10');
+    await waitFor(() => expect(screen.queryAllByTestId('card')).toHaveLength(10));
+
+    await act(async () => {
+      await router.navigate('/?size=10&search=sql');
+    });
+
+    await waitFor(() => expect(screen.getByRole('progressbar')).toBeInTheDocument());
+    expect(screen.queryAllByTestId('card')).toHaveLength(0);
+    expect(mockSearchPackages.mock.calls[1][0].query).toBe('sql');
+
+    // The superseded default-view response lands first, then the search results.
+    await act(async () => {
+      first.resolve({ packages: livePage(0, 10), count: SNAPSHOT_SIZE, offset: 0, limit: 10 });
+    });
+    expect(screen.queryAllByTestId('card')).toHaveLength(0);
+    expect(screen.getByRole('progressbar')).toBeInTheDocument();
+
+    await act(async () => {
+      search.resolve({
+        packages: [snapshotCard(5, { name: 'sqlmatch', summary: 'hit' })],
+        count: 1,
+        offset: 0,
+        limit: 10,
+      });
+    });
+    await waitFor(() => expect(cardTexts()).toEqual(['sqlmatch|hit']));
   });
 
   it('does not let an older response overwrite a newer view', async () => {

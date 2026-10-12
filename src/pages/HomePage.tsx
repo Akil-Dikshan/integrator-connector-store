@@ -305,17 +305,27 @@ export default function HomePage() {
     // Silent: the cards on screen are the catalogue's for exactly this view, so the live
     // response merges in without a spinner. Anything else takes the normal path.
     const shown = snapshotShownRef.current;
-    const silent =
-      !!shown &&
-      shown.page === currentPage &&
-      shown.pageSize === pageSize &&
-      isDefaultView({
-        query: debouncedQuery,
-        areas: selectedAreas,
-        vendors: selectedVendors,
-        types: selectedTypes,
-        sort: sortBy,
-      });
+    const isDefault = isDefaultView({
+      query: debouncedQuery,
+      areas: selectedAreas,
+      vendors: selectedVendors,
+      types: selectedTypes,
+      sort: sortBy,
+    });
+    let silent = isDefault && !!shown && shown.page === currentPage && shown.pageSize === pageSize;
+    if (!silent && isDefault && !liveLandedRef.current) {
+      // Page or size changed before live data landed: serve that slice from the catalogue
+      // if it has loaded and covers it. The live request below still runs and merges in.
+      const catalogue = peekPriorityCatalogue();
+      const view = catalogue ? catalogueView(catalogue, currentPage, pageSize) : null;
+      if (view) {
+        snapshotShownRef.current = { page: currentPage, pageSize };
+        setConnectors(view.packages);
+        setTotalCount(view.count);
+        setLoading(false);
+        silent = true;
+      }
+    }
     if (!silent) {
       snapshotShownRef.current = null;
     }
