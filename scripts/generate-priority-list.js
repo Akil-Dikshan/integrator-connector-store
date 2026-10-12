@@ -22,10 +22,12 @@
  * (hidden-packages.json, deprecated-packages.json) so other tools can read them. They are
  * not generated here; a test keeps them identical to the sources the app imports.
  *
- * Failure is soft: if Central can't be reached, or returns a suspiciously small
- * catalog, the previous priority-list.json is left alone. With no file at all the
- * app falls back to fetching from Central directly, so a Central outage never
- * breaks a build.
+ * The list drives what the store renders, so an incomplete one is worse than none: if
+ * Central can't be reached, or doesn't return every package it reports, this exits with
+ * an error and fails the build instead of shipping a partial list. For a build that
+ * can't reach Central on purpose (offline, a quick local check), set
+ * SKIP_PRIORITY_LIST=true: no list is generated and the store falls back to querying
+ * Central directly.
  *
  * Output shape:
  *   { generatedAt, centralCount, total, packages: [ { organization, name, version,
@@ -102,10 +104,11 @@ async function main() {
     console.warn('ranking-data.json is missing or empty: the list will be unranked.');
   }
 
+  // Throws unless every package Central reports came back.
   const { count, packages } = await fetchAllPackages({ sort: 'pullCount,DESC' });
-  if (packages.length < MIN_PACKAGES || packages.length < count * 0.95) {
+  if (packages.length < MIN_PACKAGES) {
     throw new Error(
-      `only ${packages.length} of ${count} packages came back; keeping existing file`
+      `only ${packages.length} packages came back; expected at least ${MIN_PACKAGES}`
     );
   }
 
@@ -125,9 +128,17 @@ async function main() {
 }
 
 if (require.main === module) {
-  main().catch((error) => {
-    console.warn(`Could not refresh priority-list.json: ${error.message}`);
-  });
+  if (process.env.SKIP_PRIORITY_LIST === 'true') {
+    console.warn('SKIP_PRIORITY_LIST=true: not generating priority-list.json.');
+  } else {
+    main().catch((error) => {
+      console.error(`Could not generate priority-list.json: ${error.message}`);
+      console.error(
+        'Fix the cause and rebuild, or set SKIP_PRIORITY_LIST=true to build without it.'
+      );
+      process.exit(1);
+    });
+  }
 }
 
 module.exports = { buildPriorityList, makeIsHidden, rateScore };

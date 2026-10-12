@@ -36,9 +36,10 @@ import SearchBar from '@/components/SearchBar';
 interface FilterSidebarProps {
   filterOptions: FilterOptions;
   /**
-   * How many results each option would give. When present, options with none are hidden
-   * (selected ones stay so they can be unticked). When null/undefined every option is
-   * listed, as before.
+   * How many results each option would give. When present, options with none are greyed
+   * out and can't be picked (selected ones stay enabled so they can be unticked). Every
+   * option stays listed so the sidebar doesn't change shape as filters change. When
+   * null/undefined all options are enabled, as before.
    */
   facetCounts?: FacetCounts | null;
   selectedAreas: string[];
@@ -64,19 +65,6 @@ interface FilterSectionProps {
   effectiveMode: 'light' | 'dark';
 }
 
-/**
- * Options to list: with counts, only those that would leave results plus the selected
- * ones (so they can be unticked), in their usual order. Without counts, all of them.
- */
-function visibleOptions(
-  options: string[],
-  selected: string[],
-  counts?: Record<string, number>
-): string[] {
-  if (!counts) return options;
-  return options.filter((option) => (counts[option] ?? 0) > 0 || selected.includes(option));
-}
-
 function FilterSection({
   title,
   options,
@@ -88,9 +76,10 @@ function FilterSection({
 }: FilterSectionProps) {
   const [expanded, setExpanded] = useState(defaultExpanded);
 
-  const visible = visibleOptions(options, selected, counts);
-  // Nothing to choose from and nothing to untick: don't offer an empty section.
-  if (counts && visible.length === 0) return null;
+  // Picking this option now would leave no results. A selected option stays enabled so it
+  // can always be unticked.
+  const isUnavailable = (option: string) =>
+    !!counts && (counts[option] ?? 0) === 0 && !selected.includes(option);
 
   return (
     <Accordion
@@ -141,9 +130,11 @@ function FilterSection({
         }}
       >
         <FormGroup>
-          {visible.map((option) => (
+          {options.map((option) => (
             <FormControlLabel
               key={option}
+              disabled={isUnavailable(option)}
+              title={isUnavailable(option) ? 'No results with the current filters' : undefined}
               control={
                 <Checkbox
                   size="small"
@@ -172,11 +163,11 @@ function FilterSection({
                 py: 0.75,
                 borderRadius: '6px',
                 gap: 1,
-                cursor: 'pointer',
+                cursor: isUnavailable(option) ? 'not-allowed' : 'pointer',
                 transition: 'background-color 0.2s',
-                '&:hover': {
-                  bgcolor: effectiveMode === 'dark' ? '#3F3F46' : '#E5E7EB',
-                },
+                '&:hover': isUnavailable(option)
+                  ? {}
+                  : { bgcolor: effectiveMode === 'dark' ? '#3F3F46' : '#E5E7EB' },
               }}
             />
           ))}

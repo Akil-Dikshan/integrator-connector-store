@@ -871,6 +871,78 @@ describe('rest-client', () => {
       }
     });
 
+    it('still reports new packages when the live check finishes before refreshCatalog is called', async () => {
+      serve([{ name: 'fresh', version: '0.1.0' }]);
+
+      // The grid renders from the list while the live check is still in flight...
+      const first = await searchPackages(base);
+      expect(names(first)).toEqual(['alpha', 'bravo', 'charlie']);
+      // ...and the check lands before anyone asks about it.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      await expect(refreshCatalog()).resolves.toBe(true);
+      expect(names(await searchPackages(base))).toContain('fresh');
+      await expect(refreshCatalog()).resolves.toBe(false);
+    });
+
+    describe('packages changed since the build', () => {
+      const AFTER_BUILD = '2026-10-11T00:00:00Z';
+      const BEFORE_BUILD = '2026-09-01T00:00:00Z';
+      const changedPackage = (name: string, createdDate: string) => ({
+        ...createMockApiResponse([{ name, version: '2.0.0' }], 0).packages[0],
+        createdDate,
+      });
+      // Serves `newer` packages newer than the build, then older ones, 100 per page.
+      const serveHistory = (newer: number) => {
+        mockFetch.mockImplementation((url: string) => {
+          const offset = Number(/offset=(\d+)/.exec(String(url))?.[1] ?? 0);
+          const limit = Number(/limit=(\d+)/.exec(String(url))?.[1] ?? 30);
+          const packages = Array.from({ length: limit }, (_, i) => offset + i).map((i) =>
+            changedPackage(`pkg${i}`, i < newer ? AFTER_BUILD : BEFORE_BUILD)
+          );
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({ packages, count: 900, offset, limit }),
+          });
+        });
+      };
+      const dateDescRequests = () => urls().filter((u) => u.includes('sort=createdDate,DESC'));
+
+      it('stops after one page when that page already reaches back to the build', async () => {
+        serveHistory(20);
+
+        await refreshCatalog();
+
+        expect(dateDescRequests()).toHaveLength(1);
+        const result = await searchPackages(base);
+        expect(result.count).toBe(3 + 100);
+      });
+
+      it('keeps paging, in parallel, while the newest packages are all newer than the build', async () => {
+        serveHistory(250);
+
+        await refreshCatalog();
+
+        // First page, then the rest up to the 500-package cap.
+        expect(dateDescRequests().map((u) => /offset=(\d+)/.exec(u)?.[1])).toEqual(
+          expect.arrayContaining(['0', '100', '200', '300', '400'])
+        );
+        expect(dateDescRequests()).toHaveLength(5);
+        const result = await searchPackages({ ...base, limit: 1000 });
+        expect(result.count).toBe(3 + 500);
+      });
+
+      it('warns when more packages changed than it will read', async () => {
+        serveHistory(900);
+        const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+
+        await refreshCatalog();
+
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining('Rebuild the store'));
+        warn.mockRestore();
+      });
+    });
+
     it('shows a newer version of a listed package without losing its rank', async () => {
       serve([{ name: 'bravo', version: '2.0.0' }]);
 

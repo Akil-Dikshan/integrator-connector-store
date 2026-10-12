@@ -668,12 +668,18 @@ async function getTotalHiddenCount(orgName?: string): Promise<number> {
  *
  * The list holds every visible package with its card data, so unfiltered views render
  * with no Central call. To still show packages released after the build, one live
- * request fetches the newest RECENT_LIMIT packages (by date); any that the list doesn't
- * know about are appended after the ranked packages, and ones with a newer version
- * replace their list entry. That request never blocks a render: searchPackages uses
+ * request fetches the packages created or updated since the build (newest first, paged,
+ * capped at RECENT_MAX_PACKAGES); any that the list doesn't know about are appended after
+ * the ranked packages, and ones with a newer version replace their list entry. Releases
+ * often land in bulk (hundreds of packages in one wave), which is why this follows the
+ * build date instead of taking a fixed handful. That request never blocks a render: searchPackages uses
  * what has arrived so far, and refreshCatalog() lets the page re-render once it does.
  */
-const RECENT_LIMIT = 50;
+const RECENT_PAGE_SIZE = 100;
+const RECENT_MAX_PACKAGES = 500;
+// Central's `createdDate` is the newest version's release time; a day of slack covers
+// clock and timezone differences between the build machine and Central.
+const RECENT_BUILD_SLACK = 24 * 60 * 60 * 1000;
 const RECENT_TTL = 10 * 60 * 1000; // 10 minutes
 
 interface Catalog {
@@ -688,6 +694,8 @@ let recentPackages: BallerinaPackage[] = [];
 let recentPromise: Promise<void> | null = null;
 let recentInFlight = false;
 let recentFetchedAt = 0;
+/** Signature of the catalog the last searchPackages call served, to tell what a re-render adds. */
+let servedSignature: string | null = null;
 let catalogVersion = 0;
 let catalogCache: { version: number; base: PriorityList; catalog: Catalog } | null = null;
 
@@ -697,6 +705,7 @@ export function __resetCatalogForTests(): void {
   recentPromise = null;
   recentInFlight = false;
   recentFetchedAt = 0;
+  servedSignature = null;
   catalogVersion = 0;
   catalogCache = null;
 }
@@ -706,15 +715,55 @@ function packageKey(pkg: BallerinaPackage): string {
   return identity ? `${identity.org}/${identity.packageName}` : `${pkg.organization}/${pkg.name}`;
 }
 
-/** Starts (or reuses) the live fetch of the newest packages. Never rejects. */
-function ensureRecent(): Promise<void> {
+function toMillis(value: unknown): number {
+  const asNumber = Number(value);
+  return Number.isFinite(asNumber) ? asNumber : Date.parse(String(value));
+}
+
+/**
+ * Packages created or updated since the list was built, newest first. Reads one page, and
+ * only when that page is still entirely newer than the build reads the rest in parallel,
+ * up to RECENT_MAX_PACKAGES. Without a usable build date it reads the first page only.
+ */
+async function fetchRecentPackages(base: PriorityList): Promise<BallerinaPackage[]> {
+  const page = (offset: number) =>
+    executeSingleSearch({ offset, limit: RECENT_PAGE_SIZE, sort: 'date-desc' });
+  const since = toMillis(base.generatedAt) - RECENT_BUILD_SLACK;
+  const reachesBuild = (packages: BallerinaPackage[]) => {
+    const oldest = packages.length ? toMillis(packages[packages.length - 1].createdDate) : NaN;
+    // An unreadable date counts as "reached the build": stop rather than page blindly.
+    return !(oldest > since);
+  };
+
+  const first = await page(0);
+  if (first.packages.length < RECENT_PAGE_SIZE || reachesBuild(first.packages)) {
+    return first.packages;
+  }
+
+  const offsets: number[] = [];
+  for (let offset = RECENT_PAGE_SIZE; offset < RECENT_MAX_PACKAGES; offset += RECENT_PAGE_SIZE) {
+    offsets.push(offset);
+  }
+  const rest = await Promise.all(offsets.map(page));
+  const packages = [first, ...rest].flatMap((response) => response.packages);
+  if (!reachesBuild(packages)) {
+    console.warn(
+      `More than ${RECENT_MAX_PACKAGES} packages changed since the priority list was built ` +
+        `(${base.generatedAt}); some are not shown. Rebuild the store.`
+    );
+  }
+  return packages;
+}
+
+/** Starts (or reuses) the live fetch of packages released since the build. Never rejects. */
+function ensureRecent(base: PriorityList): Promise<void> {
   if (recentPromise && (recentInFlight || Date.now() - recentFetchedAt < RECENT_TTL)) {
     return recentPromise;
   }
   recentInFlight = true;
-  recentPromise = executeSingleSearch({ offset: 0, limit: RECENT_LIMIT, sort: 'date-desc' })
-    .then((response) => {
-      recentPackages = response.packages;
+  recentPromise = fetchRecentPackages(base)
+    .then((packages) => {
+      recentPackages = packages;
       catalogVersion++;
     })
     .catch((error) => {
@@ -772,16 +821,19 @@ function getCatalog(base: PriorityList): Catalog {
 }
 
 /**
- * Waits for the live check for new packages and reports whether it changed the catalog
- * (a package was added or got a newer version). Resolves false when there is no
- * priority list, or nothing changed, so callers only re-render when they need to.
+ * Waits for the live check for new packages and reports whether the catalog now holds
+ * something the last searchPackages call did not serve (a package was added or got a
+ * newer version). Comparing with what was served, not with the catalog as it stood when
+ * this was called, means a live check that finished first is still reported. Resolves
+ * false when there is no priority list, or nothing changed, so callers only re-render
+ * when they need to.
  */
 export async function refreshCatalog(): Promise<boolean> {
   const base = await loadPriorityList();
   if (!base) return false;
-  const before = getCatalog(base).signature;
-  await ensureRecent();
-  return getCatalog(base).signature !== before;
+  const served = servedSignature ?? getCatalog(base).signature;
+  await ensureRecent(base);
+  return getCatalog(base).signature !== served;
 }
 
 /** How many packages each filter option would leave, keyed by the bare option name. */
@@ -857,8 +909,9 @@ export async function searchPackages(params: SearchParams): Promise<SearchRespon
   const base = params.orgName ? null : await loadPriorityList();
   if (!base) return searchCentral(params);
 
-  void ensureRecent();
+  void ensureRecent(base);
   const catalog = getCatalog(base);
+  servedSignature = catalog.signature;
   const hasAreaOrVendor = !!(params.areas?.length || params.vendors?.length);
   const typeOnly = !!params.types?.length && !hasAreaOrVendor;
   const unfiltered = !params.types?.length && !hasAreaOrVendor;
@@ -1135,7 +1188,7 @@ export async function fetchFiltersProgressively(
   // are added when the live check for new packages lands.
   const base = orgName ? null : await loadPriorityList();
   if (base) {
-    void ensureRecent();
+    void ensureRecent(base);
     if (onUpdate) {
       refreshCatalog().then((changed) => {
         if (changed) onUpdate(extractFilterOptions(getCatalog(base).packages));

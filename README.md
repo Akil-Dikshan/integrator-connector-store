@@ -463,29 +463,35 @@ Fetching the whole Ballerina Central catalog in the browser takes 10-30 s, so th
 `hidden-packages.json` and `deprecated-packages.json` are committed in `public/` for other tools; they are not
 generated, and a test fails if they drift from the files in `src/lib/connector-utils/`, so update both together.
 
+The list drives what the store renders, so **the build fails if it can't be generated** (Central unreachable, or
+fewer packages than Central reports). For a build that can't reach Central on purpose, set
+`SKIP_PRIORITY_LIST=true`: no list is generated and the store falls back to querying Central directly.
+`priority-list.json` is a build output and is git-ignored; the deployed site serves it at `/priority-list.json`,
+which is the copy to inspect when debugging.
+
 At runtime (`src/lib/rest-client/rest-client.ts`):
 
-| View                                        | Source                                                                       |
-| ------------------------------------------- | ---------------------------------------------------------------------------- |
-| Unfiltered view, any sort, Type-only filter | the priority list, no Central call                                           |
-| Vendor/Area filter, text search             | one Central request (`limit=500`), re-checked exactly on the client          |
-| Vendor list                                 | derived from the list's `Vendor/` tags                                       |
-| Packages released after the build           | one live request for the 50 newest packages, merged in after the ranked ones |
+| View                                        | Source                                                                                |
+| ------------------------------------------- | ------------------------------------------------------------------------------------- |
+| Unfiltered view, any sort, Type-only filter | the priority list, no Central call                                                    |
+| Vendor/Area filter, text search             | one Central request (`limit=500`), re-checked exactly on the client                   |
+| Vendor list                                 | derived from the list's `Vendor/` tags                                                |
+| Packages released after the build           | live requests for packages created since the build date, merged after the ranked ones |
 
-The live request never blocks the first render; `HomePage` re-fetches the page once it finds something new.
-Rebuild regularly (daily is plenty): a package deprecated or removed after the build stays listed until the next one.
-If `priority-list.json` is missing (for example `npm start` before any build), the store falls back to querying
-Central directly. `priority-list.json` is a build output and is git-ignored; the deployed site serves it at
-`/priority-list.json`, which is the copy to inspect when debugging.
+The live check reads the newest packages first, 100 at a time, until it reaches the build date (up to 500
+packages; it warns if more changed). Releases often land in bulk, so this follows the build date instead of
+taking a fixed number. It never blocks the first render; `HomePage` re-fetches the page once it finds something new.
+Builds are manual, so the list can be weeks old: new and updated packages are picked up live, but a package
+deprecated or removed after the build stays listed until the next build.
 
 ### Filter option counts
 
-With a priority list, the sidebar only offers options that would leave results. `getFacetCounts`
+With a priority list, the sidebar only lets you pick options that would leave results. `getFacetCounts`
 (`rest-client.ts`) counts, over the in-memory catalog, how many packages each Area/Vendor/Type option
 would give with the other selected filters and the search text applied (a category's own selection is
-left out, since values inside a category are OR'd). Options with no results are hidden unless selected,
-a section with nothing to choose is dropped, and the rest keep their usual order in a scrollable list.
-It adds no Central call. Without a priority list every option is shown as before.
+left out, since values inside a category are OR'd). Options with no results are greyed out and can't be picked
+(a selected one stays enabled so it can be unticked); every option stays listed in its usual order in a scrollable
+list, so the sidebar doesn't change shape as filters change. It adds no Central call. Without a priority list every option is shown as before.
 
 ### Filter Caching
 
