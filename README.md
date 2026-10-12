@@ -473,7 +473,7 @@ At runtime (`src/lib/rest-client/rest-client.ts`):
 
 | View                                        | Source                                                                                |
 | ------------------------------------------- | ------------------------------------------------------------------------------------- |
-| Unfiltered view, any sort, Type-only filter | the priority catalogue, no Central call                                                    |
+| Unfiltered view, any sort, Type-only filter | the priority catalogue, no Central call                                               |
 | Vendor/Area filter, text search             | one Central request (`limit=500`), re-checked exactly on the client                   |
 | Vendor list                                 | derived from the list's `Vendor/` tags                                                |
 | Packages released after the build           | live requests for packages created since the build date, merged after the ranked ones |
