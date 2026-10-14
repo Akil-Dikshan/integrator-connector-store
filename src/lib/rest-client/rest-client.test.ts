@@ -20,7 +20,9 @@ import {
   searchPackages,
   fetchFiltersProgressively,
   fetchLatestConnectorEntries,
+  fetchPackageVersions,
   fetchPackageVersionsNoRetry,
+  fetchPackageDetails,
   SearchParams,
   __resetHiddenCountCacheForTests,
   __resetRankingDataCacheForTests,
@@ -30,6 +32,7 @@ import {
   getFacetCounts,
 } from './rest-client';
 
+import { isNotFoundError } from './errors';
 import { loadPriorityCatalogue } from '../priority-catalogue';
 
 // These tests exercise the Central-only path; the priority catalogue has its own describe below.
@@ -1252,6 +1255,62 @@ describe('rest-client', () => {
 
       jest.advanceTimersByTime(10000);
       await assertion;
+    });
+  });
+
+  describe('a package Central does not have (404)', () => {
+    const notFound = { ok: false, status: 404, json: () => Promise.resolve({}) };
+    const versions = (list: string[]) => ({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve(list),
+    });
+
+    it('rejects with a not-found error and asks only once, instead of retrying', async () => {
+      mockFetch.mockResolvedValue(notFound);
+
+      const error = await fetchPackageVersions('ballerinax', 'doesnotexist').catch((e) => e);
+
+      expect(isNotFoundError(error)).toBe(true);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('treats a missing package in fetchPackageDetails as not found', async () => {
+      mockFetch.mockResolvedValue(notFound);
+
+      const error = await fetchPackageDetails('ballerinax', 'doesnotexist', 'latest').catch(
+        (e) => e
+      );
+
+      expect(isNotFoundError(error)).toBe(true);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('treats a missing version in fetchPackageDetails as not found', async () => {
+      mockFetch.mockResolvedValueOnce(versions(['1.0.0'])).mockResolvedValueOnce(notFound);
+
+      const error = await fetchPackageDetails('ballerinax', 'http', '9.9.9').catch((e) => e);
+
+      expect(isNotFoundError(error)).toBe(true);
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+    });
+
+    it('still retries other failures', async () => {
+      const realSetTimeout = global.setTimeout;
+      // Skip the 1s/2s backoff between attempts; leave the 10s request timeout alone.
+      jest
+        .spyOn(global, 'setTimeout')
+        .mockImplementation(((fn: () => void, ms?: number) =>
+          ms === 1000 || ms === 2000 ? realSetTimeout(fn, 0) : realSetTimeout(fn, ms)) as never);
+      jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+      mockFetch.mockResolvedValue({ ok: false, status: 500, json: () => Promise.resolve({}) });
+
+      const error = await fetchPackageVersions('ballerinax', 'http').catch((e) => e);
+
+      expect(isNotFoundError(error)).toBe(false);
+      expect(error.message).toMatch(/500/);
+      expect(mockFetch).toHaveBeenCalledTimes(3);
+      jest.restoreAllMocks();
     });
   });
 });

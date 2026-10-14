@@ -25,6 +25,7 @@ import {
   isHiddenPackage,
 } from '../connector-utils';
 import semver from 'semver';
+import { PackageNotFoundError, isNotFoundError } from './errors';
 import {
   loadPriorityCatalogue,
   PriorityCatalogue,
@@ -169,6 +170,8 @@ async function withRetry<T>(
     try {
       return await fn();
     } catch (error) {
+      // A 404 is a definite answer; retrying only delays the "not found" page.
+      if (isNotFoundError(error)) throw error;
       lastError = error as Error;
       console.warn(`Attempt ${attempt + 1}/${maxRetries} failed:`, error);
 
@@ -1330,6 +1333,9 @@ export async function fetchPackageVersionsNoRetry(
   packageName: string
 ): Promise<string[]> {
   const response = await fetchWithTimeout(`${PACKAGES_ENDPOINT}/${orgName}/${packageName}`);
+  if (response.status === 404) {
+    throw new PackageNotFoundError(`Package ${orgName}/${packageName} was not found`);
+  }
   if (!response.ok) {
     throw new Error(`HTTP error! status: ${response.status}`);
   }
@@ -1394,6 +1400,11 @@ export async function fetchPackageDetails(
       `${PACKAGES_ENDPOINT}/${orgName}/${packageName}/${targetVersion}`
     );
 
+    if (response.status === 404) {
+      throw new PackageNotFoundError(
+        `Package ${orgName}/${packageName} ${targetVersion} was not found`
+      );
+    }
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`);
     }

@@ -90,6 +90,21 @@ describe('connector-utils', () => {
       expect(getDisplayName('salesforce.api')).toBe('Salesforce API');
     });
 
+    it.each([
+      ['ai.np', 'AI NP'],
+      ['aws.dynamodbstreams', 'AWS DynamoDB Streams'],
+      ['covid19', 'COVID-19'],
+      ['googleapis.oauth2', 'Google OAuth2'],
+      ['health.hl7v2commons', 'HL7v2 Commons'],
+      ['health.hl7v2.utils.v2tofhirr4', 'HL7v2 Utils V2 to FHIR R4'],
+      ['mcp', 'MCP'],
+      ['oraclefusion.erp.integrations', 'Oracle ERP Integrations'],
+      ['solace.jms', 'Solace JMS'],
+    ])('should show %s as "%s" (QA issue 2640), whatever the vendor says', (name, expected) => {
+      expect(getDisplayName(name)).toBe(expected);
+      expect(getDisplayName(name, 'Oracle')).toBe(expected);
+    });
+
     it('should capitalize first letter for unknown terms', () => {
       expect(getDisplayName('myconnector')).toBe('Myconnector');
       expect(getDisplayName('custom.service')).toBe('Custom Service');
