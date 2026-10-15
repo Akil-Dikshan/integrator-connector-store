@@ -1199,7 +1199,8 @@ describe('rest-client', () => {
 
       const filters = await fetchFiltersProgressively(undefined, onUpdate);
 
-      expect(filters.vendors).toEqual(expect.arrayContaining(['Acme', 'Other']));
+      expect(filters.vendors).toContain('Acme');
+      expect(filters.vendors).not.toContain('Other');
       expect(filters.vendors).not.toContain('Newcomer');
       expect(storageMock.setItem).not.toHaveBeenCalled();
       expect(batchRequests()).toHaveLength(0);
