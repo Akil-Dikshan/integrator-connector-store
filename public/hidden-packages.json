@@ -1,6 +1,9 @@
 [
   "ai",
+  "ai.agent",
+  "ai.devant",
   "ai.eval",
+  "ai.np",
   "amp",
   "asyncapi.native.handler",
   "aws",

@@ -41,6 +41,8 @@ import BreadcrumbsNav from '@/components/BreadcrumbsNav';
 import { useParams, useNavigate } from 'react-router-dom';
 import { PackageDetails } from '@/types/connector';
 import { fetchPackageDetails } from '@/lib/rest-client';
+import { isNotFoundError } from '@/lib/rest-client/errors';
+import { useNoIndexMeta } from '@/lib/seo/useNoIndexMeta';
 import { fetchMIConnector } from '@/lib/mi-connector';
 import {
   parseConnectorMetadata,
@@ -123,7 +125,10 @@ export default function ConnectorDetailPage() {
   const [packageDetails, setPackageDetails] = useState<PackageDetails | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Central said 404: a definite answer, so no Retry (unlike a network or server error).
+  const [notFound, setNotFound] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
+  const missing = hidden || notFound;
   const [miConnector, setMiConnector] = useState<{
     name: string;
     documentationUrl?: string;
@@ -164,11 +169,16 @@ export default function ConnectorDetailPage() {
       try {
         setLoading(true);
         setError(null);
+        setNotFound(false);
         const details = await fetchPackageDetails(org, name, version);
         if (cancelled) return;
         setPackageDetails(details);
       } catch (err) {
         if (cancelled) return;
+        if (isNotFoundError(err)) {
+          setNotFound(true);
+          return;
+        }
         const errorMessage = err instanceof Error ? err.message : String(err);
         setError(errorMessage || 'Failed to load connector details.');
       } finally {
@@ -251,6 +261,8 @@ export default function ConnectorDetailPage() {
     () => (packageDetails ? extractOverview(String(packageDetails?.readme || '')) : ''),
     [packageDetails]
   );
+
+  useNoIndexMeta(missing, 'Connector not found - WSO2 Integration Platform Connectors');
 
   // Update meta tags dynamically when package details load
   useEffect(() => {
@@ -591,14 +603,16 @@ export default function ConnectorDetailPage() {
             minHeight={400}
           >
             <Typography variant="h5" color="error" gutterBottom>
-              {hidden ? 'Connector not found' : 'Failed to load connector details'}
+              {missing ? 'Connector not found' : 'Failed to load connector details'}
             </Typography>
             <Typography variant="body1" color="text.secondary" sx={{ mb: 3 }}>
               {hidden
                 ? 'This connector is not available in the store.'
-                : error || 'The connector could not be found or is unavailable.'}
+                : notFound
+                  ? 'We could not find this connector. It may have been renamed or removed.'
+                  : error || 'The connector could not be found or is unavailable.'}
             </Typography>
-            {hidden ? (
+            {missing ? (
               <Button variant="contained" color="primary" onClick={() => navigate('/')}>
                 Back to store
               </Button>

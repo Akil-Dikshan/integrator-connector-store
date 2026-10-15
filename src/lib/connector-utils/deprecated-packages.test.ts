@@ -88,7 +88,7 @@ describe('isHiddenPackage with deprecated and manually hidden entries', () => {
     ['ballerina', 'jwt'],
     ['ballerina', 'data.csv'],
     ['ballerinax', 'snowflake.driver'],
-    ['ballerinax', 'ai.agent'],
+    ['ballerinax', 'ai.openai'],
     ['ballerinax', 'googleapis.gcalendar'],
   ])('keeps %s/%s visible', (org, name) => {
     expect(isHiddenPackage({ name, organization: org })).toBe(false);

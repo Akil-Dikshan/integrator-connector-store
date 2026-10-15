@@ -21,6 +21,7 @@ import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { OxygenUIThemeProvider, extendTheme, OxygenTheme } from '@wso2/oxygen-ui';
 import HomePage from './pages/HomePage';
 import ConnectorDetailPage from './pages/ConnectorDetailPage';
+import NotFoundPage from './pages/NotFoundPage';
 
 declare global {
   interface Window {
@@ -42,6 +43,7 @@ function App() {
           <Route path="/" element={<HomePage />} />
           <Route path="/connector/:org/:name" element={<ConnectorDetailPage />} />
           <Route path="/connector/:org/:name/:version" element={<ConnectorDetailPage />} />
+          <Route path="*" element={<NotFoundPage />} />
         </Routes>
       </Router>
     </OxygenUIThemeProvider>

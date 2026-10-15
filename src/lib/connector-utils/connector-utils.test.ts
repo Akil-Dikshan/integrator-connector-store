@@ -90,6 +90,25 @@ describe('connector-utils', () => {
       expect(getDisplayName('salesforce.api')).toBe('Salesforce API');
     });
 
+    it.each([
+      ['aws.dynamodbstreams', 'AWS DynamoDB Streams'],
+      ['covid19', 'COVID-19'],
+      ['googleapis.oauth2', 'Google OAuth 2.0'],
+      ['health.hl7v2', 'HL7 v2'],
+      ['health.hl7v23', 'HL7 v2.3'],
+      ['health.hl7v231', 'HL7 v2.3.1'],
+      ['health.hl7v271', 'HL7 v2.7.1'],
+      ['health.hl7v2commons', 'HL7 v2 Commons'],
+      ['health.hl7v2.utils.v2tofhirr4', 'HL7 v2 Utils v2 to FHIR R4'],
+      ['health.hl7v23.utils.v2tofhirr4', 'HL7 v2.3 Utils v2 to FHIR R4'],
+      ['mcp', 'MCP'],
+      ['oraclefusion.erp.integrations', 'Oracle Fusion ERP Integrations'],
+      ['solace.jms', 'Solace JMS'],
+    ])('should show %s as "%s" (QA issue 2640), whatever the vendor says', (name, expected) => {
+      expect(getDisplayName(name)).toBe(expected);
+      expect(getDisplayName(name, 'Oracle')).toBe(expected);
+    });
+
     it('should capitalize first letter for unknown terms', () => {
       expect(getDisplayName('myconnector')).toBe('Myconnector');
       expect(getDisplayName('custom.service')).toBe('Custom Service');
@@ -537,7 +556,7 @@ describe('connector-utils', () => {
     });
 
     it('loads the shipped list from hidden-packages.json', () => {
-      expect(HIDDEN_PACKAGES.size).toBe(107);
+      expect(HIDDEN_PACKAGES.size).toBe(110);
       expect(HIDDEN_PACKAGES.has('sql')).toBe(true);
     });
   });

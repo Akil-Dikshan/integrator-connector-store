@@ -25,6 +25,7 @@ import ConnectorDetailPage from './ConnectorDetailPage';
 import { fetchPackageDetails } from '@/lib/rest-client';
 import { fetchMIConnector } from '@/lib/mi-connector';
 import { HIDDEN_PACKAGES } from '@/lib/connector-utils';
+import { PackageNotFoundError } from '@/lib/rest-client/errors';
 
 jest.mock('@/lib/rest-client', () => ({
   fetchPackageDetails: jest.fn(),
@@ -79,6 +80,27 @@ describe('ConnectorDetailPage hidden packages', () => {
     expect(screen.queryByText('Retry')).not.toBeInTheDocument();
     expect(mockFetchPackageDetails).not.toHaveBeenCalled();
     expect(mockFetchMIConnector).not.toHaveBeenCalled();
+  });
+
+  it('says "not found" with a way back, and no Retry, when Central answers 404', async () => {
+    mockFetchPackageDetails.mockRejectedValue(new PackageNotFoundError('missing'));
+
+    renderAt('/connector/ballerinax/doesnotexist/latest');
+
+    expect(await screen.findByText('Connector not found')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Back to store' })).toBeInTheDocument();
+    expect(screen.queryByText('Retry')).not.toBeInTheDocument();
+    expect(screen.queryByText(/HTTP error/)).not.toBeInTheDocument();
+  });
+
+  it('still offers Retry for a failure that is not a 404', async () => {
+    mockFetchPackageDetails.mockRejectedValue(new Error('HTTP error! status: 500'));
+
+    renderAt('/connector/ballerinax/http/latest');
+
+    expect(await screen.findByText('Failed to load connector details')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    expect(screen.queryByText('Back to store')).not.toBeInTheDocument();
   });
 
   it('still fetches a package that is not hidden', async () => {
