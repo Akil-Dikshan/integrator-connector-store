@@ -154,6 +154,16 @@ describe('connector-utils', () => {
       });
     });
 
+    it('should hide the "Other" fallback from vendor options', () => {
+      const connectors = [
+        createMockPackage({ keywords: ['Area/Finance', 'Vendor/Stripe'] }),
+        createMockPackage({ keywords: ['Area/Finance', 'Vendor/Other'] }),
+        createMockPackage({ keywords: ['Area/Finance'] }),
+      ];
+
+      expect(extractFilterOptions(connectors).vendors).toEqual(['Stripe']);
+    });
+
     it('should sort filter options alphabetically', () => {
       const connectors = [
         createMockPackage({ keywords: ['Area/Zebra', 'Vendor/Alpha', 'Type/Beta'] }),
