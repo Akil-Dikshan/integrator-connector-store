@@ -10,6 +10,7 @@ export {
   sortConnectors,
   METADATA_FALLBACK,
   HIDDEN_PACKAGES,
+  isHiddenPackage,
   getConnectorDocsUrl,
   getConnectorDocsUrlMap,
 } from './connector-utils';

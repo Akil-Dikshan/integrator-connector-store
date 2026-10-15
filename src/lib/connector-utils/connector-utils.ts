@@ -17,6 +17,8 @@
 */
 
 import { BallerinaPackage, ConnectorMetadata, FilterOptions } from '@/types/connector';
+import hiddenPackages from './hidden-packages.json';
+import deprecatedPackages from './deprecated-packages.json';
 
 /** Default metadata value for connectors missing Area/Vendor/Type keywords */
 export const METADATA_FALLBACK = 'Other';
@@ -150,77 +152,25 @@ const CAPITALIZATION_DICTIONARY: Record<string, string> = {
 /**
  * Packages to hide from the integration store.
  * These are excluded from all search results, pagination, and filter options.
+ *
+ * Entries are either a bare package name (hides that name under every org) or
+ * "org/name" (hides only that org's package). The list lives in
+ * hidden-packages.json (manual) and deprecated-packages.json (packages whose
+ * newest version is deprecated in Ballerina Central) so
+ * scripts/generate-sitemap.js can read the same data.
  */
-export const HIDDEN_PACKAGES = new Set<string>([
-  'amp',
-  'asyncapi.native.handler',
-  'aws',
-  'choreo',
-  'client.config',
-  'financial.iso20022',
-  'financial.iso20022ToSwiftmt',
-  'financial.iso8583',
-  'financial.swift.mt',
-  'financial.swiftmtToIso20022',
-  'health.base',
-  'health.ccda.r3',
-  'health.dicom',
-  'health.dicom.dicomparser',
-  'health.dicom.dicomservice',
-  'health.dicom.dicomweb',
-  'health.fhir.r4.authz',
-  'health.fhir.r4utils',
-  'health.fhir.r5',
-  'health.fhir.r5.international500',
-  'health.fhir.r5.parser',
-  'health.fhir.r5.validator',
-  'health.fhir.r5utils.fhirpath',
-  'health.fhir.templates.r4.diagnosticreport',
-  'health.fhir.templates.r4.encounter',
-  'health.fhir.templates.r4.epicconnect',
-  'health.fhir.templates.r4.metadata',
-  'health.fhir.templates.r4.observation',
-  'health.fhir.templates.r4.organization',
-  'health.fhir.templates.r4.patient',
-  'health.fhir.templates.r4.practitioner',
-  'health.fhir.templates.r4.repositorysync',
-  'health.fhir.templates.r4.servicerequest',
-  'health.fhir.templates.r4.smartconfiguration',
-  'health.fhir.templates.r4.uscore501.encounter',
-  'health.fhir.templates.r4.uscore501.patient',
-  'health.fhirr4',
-  'health.fhirr5',
-  'idetraceprovider',
-  'metrics.logs',
-  'moesif',
-  'newrelic',
-  'persist',
-  'persist.googlesheets',
-  'persist.inmemory',
-  'persist.redis',
-  'persist.sql',
-  'prometheus',
-  'sap',
-  'sap.businessone',
-  'transformer',
-  'trigger.aayu.mftg.as2',
-  'trigger.asb',
-  'trigger.asgardeo',
-  'trigger.github',
-  'trigger.google.calendar',
-  'trigger.google.drive',
-  'trigger.google.mail',
-  'trigger.google.sheets',
-  'trigger.hubspot',
-  'trigger.identityserver',
-  'trigger.quickbooks',
-  'trigger.salesforce',
-  'trigger.shopify',
-  'trigger.slack',
-  'trigger.twilio',
-  'wso2.controlplane',
-  'zipkin',
-]);
+export const HIDDEN_PACKAGES = new Set<string>([...hiddenPackages, ...deprecatedPackages]);
+
+/**
+ * True if the package is hidden, by bare name or by "org/name".
+ * `organization` is optional: without it only bare-name entries can match.
+ */
+export function isHiddenPackage(pkg: Pick<BallerinaPackage, 'name' | 'organization'>): boolean {
+  return (
+    HIDDEN_PACKAGES.has(pkg.name) ||
+    (!!pkg.organization && HIDDEN_PACKAGES.has(`${pkg.organization}/${pkg.name}`))
+  );
+}
 
 const DOCS_BASE = 'https://wso2.com/integration-platform/docs/connectors/catalog';
 
@@ -601,7 +551,10 @@ const DISPLAY_NAME_OVERRIDES: Record<string, string> = {
   'wso2.icp': 'WSO2 ICP',
 };
 
-const SITEMAP_CACHE_KEY = 'connector_docs_sitemap_v2';
+// Bumped to v3 to invalidate caches populated before the bare package-root URL fix
+// (see pickOverviewUrl) — otherwise users who visited recently would keep the old,
+// incomplete map for up to SITEMAP_CACHE_TTL after this fix ships.
+const SITEMAP_CACHE_KEY = 'connector_docs_sitemap_v3';
 const SITEMAP_CACHE_TTL = 6 * 60 * 60 * 1000; // 6 hours
 const DOCS_SITEMAP_URL = `${DOCS_BASE.replace('/connectors/catalog', '')}/sitemap.xml`;
 
@@ -615,15 +568,28 @@ interface SitemapCache {
  * package folder (e.g. overview, example, setup-guide, action-reference). The final
  * slug isn't predictable (connector-overview, overview, or a fully custom name — see
  * CONNECTOR_DOCS for examples), so when there's more than one page we prefer whichever
- * slug contains "overview"; a lone page is assumed to be the overview page itself.
+ * slug contains "overview". Failing that, some catalog entries — notably Ballerina
+ * standard-library "Built-in" modules like graphql/grpc/mqtt — publish their overview
+ * content at the bare package-root URL itself (no further slug) instead of a page
+ * named "overview", so we fall back to that when present. A lone page is assumed to
+ * be the overview page itself. See https://github.com/wso2/product-integrator/issues/2554.
  */
-function pickOverviewUrl(urls: string[]): string | undefined {
+export function pickOverviewUrl(urls: string[], packageName: string): string | undefined {
   if (urls.length === 1) return urls[0];
-  return urls.find((url) => /overview/i.test(url.split('/').filter(Boolean).pop() ?? ''));
+  const explicitOverview = urls.find((url) =>
+    /overview/i.test(url.split('/').filter(Boolean).pop() ?? '')
+  );
+  if (explicitOverview) return explicitOverview;
+  return urls.find((url) => url.split('/').filter(Boolean).pop() === packageName);
 }
 
 // Module-level promise deduplicates concurrent calls during the same page session
 let sitemapPromise: Promise<Map<string, string>> | null = null;
+
+/** Test-only: clears the in-memory sitemap cache so test cases don't leak state. */
+export function __resetSitemapCacheForTests(): void {
+  sitemapPromise = null;
+}
 
 /**
  * Returns a map of package name -> documentation URL, built by parsing every
@@ -658,7 +624,9 @@ export function getConnectorDocsUrlMap(): Promise<Map<string, string>> {
     const xml = await response.text();
 
     const urlsByPackage = new Map<string, string[]>();
-    const regex = /https:\/\/[^\s<]*\/connectors\/catalog\/[^/<]+\/([^/<]+)\/[^/<\s]+/g;
+    // The trailing /{slug} is optional so a bare .../catalog/{category}/{packageName}
+    // URL (no slug at all) is captured too — see pickOverviewUrl.
+    const regex = /https:\/\/[^\s<]*\/connectors\/catalog\/[^/<]+\/([^/<]+)(?:\/[^/<\s]+)?/g;
     let match;
     while ((match = regex.exec(xml)) !== null) {
       const [url, packageName] = match;
@@ -669,7 +637,7 @@ export function getConnectorDocsUrlMap(): Promise<Map<string, string>> {
 
     const docsUrlMap = new Map<string, string>();
     for (const [packageName, urls] of urlsByPackage) {
-      const overviewUrl = pickOverviewUrl(urls);
+      const overviewUrl = pickOverviewUrl(urls, packageName);
       if (overviewUrl) docsUrlMap.set(packageName, overviewUrl);
     }
 

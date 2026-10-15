@@ -32,7 +32,14 @@ import {
 } from '@wso2/oxygen-ui';
 import { ChevronRight, Filter } from '@wso2/oxygen-ui-icons-react';
 import { BallerinaPackage, FilterOptions } from '@/types/connector';
-import { searchPackages, fetchFiltersProgressively, SortOption } from '@/lib/rest-client';
+import {
+  searchPackages,
+  fetchFiltersProgressively,
+  refreshCatalog,
+  getFacetCounts,
+  SortOption,
+  FacetCounts,
+} from '@/lib/rest-client';
 import Pagination from '@/components/Pagination';
 import ConnectorCard from '@/components/ConnectorCard';
 import WSO2Header from '@/components/WSO2Header';
@@ -157,14 +164,30 @@ export default function HomePage() {
     'HRMS',
     'Healthcare',
   ];
+  const predefinedTypes = [
+    'Connector',
+    'Data Loader',
+    'Driver',
+    'Embedding Provider',
+    'Knowledge Base',
+    'Library',
+    'Model Provider',
+    'Short Term Memory Store',
+    'Trigger',
+    'Vector Store',
+  ];
   const [filterOptions, setFilterOptionsState] = useState<FilterOptions>({
     areas: predefinedAreas,
     vendors: [],
-    types: [],
+    types: predefinedTypes,
   });
   const setFilterOptions = (filters: FilterOptions) => {
-    setFilterOptionsState({ ...filters, areas: predefinedAreas });
+    setFilterOptionsState({ ...filters, areas: predefinedAreas, types: predefinedTypes });
   };
+  // How many results each filter option would give; null until known (or with no priority catalogue)
+  const [facetCounts, setFacetCounts] = useState<FacetCounts | null>(null);
+  // Bumped when the live check changes the catalog, so the counts are recomputed
+  const [catalogRevision, setCatalogRevision] = useState(0);
   const [loading, setLoading] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -196,14 +219,14 @@ export default function HomePage() {
   const fetchIdRef = useRef(0);
   // Ref to track if initial fetch is done
   const initialFetchDoneRef = useRef(false);
-  // Ref to track if component just mounted (to avoid resetting page on mount)
-  const isMountedRef = useRef(false);
   // Ref to prevent URL->State sync from running (when URL changes from external source)
   const syncingFromUrlRef = useRef(false);
   // Ref to prevent State->URL updates from triggering URL->State sync
   const updatingUrlFromStateRef = useRef(false);
   // Ref to track previous URL params
   const prevSearchParamsRef = useRef<string>('');
+  // Ref to mark that the next State->URL update came from a direct Pagination click (push, not replace)
+  const isUserPageClickRef = useRef(false);
 
   // Mobile filter drawer state
   const [mobileFilterOpen, setMobileFilterOpen] = useState(false);
@@ -213,18 +236,21 @@ export default function HomePage() {
     setSelectedAreas((prev) =>
       prev.includes(area) ? prev.filter((a) => a !== area) : [...prev, area]
     );
+    setCurrentPage(1);
   };
 
   const toggleTypeFilter = (type: string) => {
     setSelectedTypes((prev) =>
       prev.includes(type) ? prev.filter((t) => t !== type) : [...prev, type]
     );
+    setCurrentPage(1);
   };
 
   const toggleVendorFilter = (vendor: string) => {
     setSelectedVendors((prev) =>
       prev.includes(vendor) ? prev.filter((v) => v !== vendor) : [...prev, vendor]
     );
+    setCurrentPage(1);
   };
 
   const clearAllFilters = () => {
@@ -232,6 +258,19 @@ export default function HomePage() {
     setSelectedTypes([]);
     setSelectedVendors([]);
     setSearchInput('');
+    setCurrentPage(1);
+  };
+
+  // User-driven search input change (resets to page 1, unlike the URL->State sync below)
+  const handleSearchInputChange = (value: string) => {
+    setSearchInput(value);
+    setCurrentPage(1);
+  };
+
+  // Direct Pagination click: creates a history entry so browser Back returns to the previous page
+  const handlePageChange = (page: number) => {
+    isUserPageClickRef.current = true;
+    setCurrentPage(page);
   };
 
   // Fetch page data from REST API
@@ -241,18 +280,29 @@ export default function HomePage() {
       setLoading(true);
       setError(null);
 
-      const response = await searchPackages({
-        query: debouncedQuery,
-        areas: selectedAreas,
-        vendors: selectedVendors,
-        types: selectedTypes,
-        offset: (currentPage - 1) * pageSize,
-        limit: pageSize,
-        sort: sortBy,
-      });
+      const request = (page: number) =>
+        searchPackages({
+          query: debouncedQuery,
+          areas: selectedAreas,
+          vendors: selectedVendors,
+          types: selectedTypes,
+          offset: (page - 1) * pageSize,
+          limit: pageSize,
+          sort: sortBy,
+        });
+
+      let response = await request(currentPage);
 
       // Discard stale responses
       if (fetchId !== fetchIdRef.current) return;
+
+      // Clamp an out-of-range page (e.g. ?page=999) to the last page
+      const lastPage = Math.max(1, Math.ceil(response.count / pageSize));
+      if (currentPage > lastPage) {
+        response = await request(lastPage);
+        if (fetchId !== fetchIdRef.current) return;
+        setCurrentPage(lastPage);
+      }
 
       setConnectors(response.packages);
       setTotalCount(response.count);
@@ -277,6 +327,16 @@ export default function HomePage() {
     sortBy,
   ]);
 
+  // Bug fix: Prevents a redundant double-fetch on mount. Effect A fetches data
+  // and sets initialLoading=false. This ref flags Effect B to ignore that specific
+  // state change without breaking subsequent fetches (filters, sorting, etc.).
+  const skipInitialLoadingFetchRef = useRef(false);
+
+  // The latest fetchPageData, so work that finishes after mount re-fetches with the
+  // current filters and page rather than the ones captured when it started.
+  const fetchPageDataRef = useRef(fetchPageData);
+  fetchPageDataRef.current = fetchPageData;
+
   // Load filter options once on mount, then load first page
   useEffect(() => {
     const initialize = async () => {
@@ -294,11 +354,21 @@ export default function HomePage() {
         });
         setFilterOptions(filters);
 
+        skipInitialLoadingFetchRef.current = true;
         setInitialLoading(false);
+
+        // Packages released since the build arrive through a live check that never
+        // blocks the first render; show them once it lands.
+        Promise.resolve(refreshCatalog()).then((changed) => {
+          if (!changed) return;
+          fetchPageDataRef.current();
+          setCatalogRevision((revision) => revision + 1);
+        });
       } catch (error) {
         console.error('Failed to initialize:', error);
         const errorMessage = error instanceof Error ? error.message : 'Failed to load filters.';
         setError(errorMessage);
+        skipInitialLoadingFetchRef.current = true;
         setInitialLoading(false);
       }
     };
@@ -310,9 +380,42 @@ export default function HomePage() {
   // Trigger server-side fetch when filters/sort/page change (after initial loading)
   useEffect(() => {
     if (!initialLoading) {
+      if (skipInitialLoadingFetchRef.current) {
+        skipInitialLoadingFetchRef.current = false;
+        return;
+      }
       fetchPageData();
     }
   }, [initialLoading, fetchPageData]);
+
+  // Keep the sidebar's options in step with the results: recount whenever the filters or
+  // the query change. It reads the in-memory catalog, so it never delays the grid.
+  useEffect(() => {
+    if (initialLoading) return;
+    let stale = false;
+    getFacetCounts({
+      query: debouncedQuery,
+      areas: selectedAreas,
+      vendors: selectedVendors,
+      types: selectedTypes,
+    })
+      .then((counts) => {
+        if (!stale) setFacetCounts(counts);
+      })
+      .catch(() => {
+        if (!stale) setFacetCounts(null);
+      });
+    return () => {
+      stale = true;
+    };
+  }, [
+    initialLoading,
+    debouncedQuery,
+    selectedAreas,
+    selectedVendors,
+    selectedTypes,
+    catalogRevision,
+  ]);
 
   // Sync URL params to state (URL -> State)
   useEffect(() => {
@@ -357,6 +460,10 @@ export default function HomePage() {
 
   // Sync state to URL params (State -> URL)
   useEffect(() => {
+    // Read and clear unconditionally so a bail-out below can't leak a stale push flag
+    const userPageClick = isUserPageClickRef.current;
+    isUserPageClickRef.current = false;
+
     // Skip if we're currently syncing from URL to avoid infinite loop
     if (syncingFromUrlRef.current) {
       return;
@@ -364,13 +471,15 @@ export default function HomePage() {
 
     const params = new URLSearchParams();
 
-    if (currentPage > 1) params.set('page', currentPage.toString());
-    if (pageSize !== 30) params.set('size', pageSize.toString());
+    // Filters first, then sort and paging, so the URL reads naturally
+    // (?areas=Finance&page=3) and a shared link keeps the same shape.
     if (debouncedQuery) params.set('search', debouncedQuery);
     if (selectedAreas.length > 0) params.set('areas', selectedAreas.join(','));
     if (selectedVendors.length > 0) params.set('vendors', selectedVendors.join(','));
     if (selectedTypes.length > 0) params.set('types', selectedTypes.join(','));
     if (sortBy !== 'pullCount-desc') params.set('sort', sortBy);
+    if (pageSize !== 30) params.set('size', pageSize.toString());
+    if (currentPage > 1) params.set('page', currentPage.toString());
 
     const newParamsString = params.toString();
     const currentParamsString = searchParams.toString();
@@ -379,7 +488,7 @@ export default function HomePage() {
     if (newParamsString !== currentParamsString) {
       // Mark that we're updating URL from state
       updatingUrlFromStateRef.current = true;
-      setSearchParams(params, { replace: true });
+      setSearchParams(params, { replace: !userPageClick });
     }
   }, [
     currentPage,
@@ -392,19 +501,6 @@ export default function HomePage() {
     searchParams,
     setSearchParams,
   ]);
-
-  // Reset to page 1 when filters change (but not on mount or when syncing from URL)
-  useEffect(() => {
-    if (!isMountedRef.current) {
-      isMountedRef.current = true;
-      return;
-    }
-    // Don't reset page when syncing from URL
-    if (syncingFromUrlRef.current) {
-      return;
-    }
-    setCurrentPage(1);
-  }, [selectedAreas, selectedVendors, selectedTypes, debouncedQuery, pageSize]);
 
   // Scroll to top when page changes
   useEffect(() => {
@@ -483,11 +579,12 @@ export default function HomePage() {
               <Box sx={{ display: { xs: 'none', md: 'block' } }}>
                 <FilterSidebar
                   filterOptions={filterOptions}
+                  facetCounts={facetCounts}
                   selectedAreas={selectedAreas}
                   selectedVendors={selectedVendors}
                   selectedTypes={selectedTypes}
                   searchQuery={searchInput}
-                  onSearchChange={setSearchInput}
+                  onSearchChange={handleSearchInputChange}
                   onAreaChange={toggleAreaFilter}
                   onVendorChange={toggleVendorFilter}
                   onTypeChange={toggleTypeFilter}
@@ -510,7 +607,7 @@ export default function HomePage() {
                   <Box sx={{ flex: 1 }}>
                     <SearchBar
                       value={searchInput}
-                      onChange={setSearchInput}
+                      onChange={handleSearchInputChange}
                       effectiveMode={effectiveMode}
                     />
                   </Box>
@@ -580,7 +677,7 @@ export default function HomePage() {
                         currentPage={currentPage}
                         totalItems={totalCount}
                         pageSize={pageSize}
-                        onPageChange={setCurrentPage}
+                        onPageChange={handlePageChange}
                         onPageSizeChange={setPageSize}
                         sortBy={sortBy}
                         onSortChange={setSortBy}
@@ -646,7 +743,7 @@ export default function HomePage() {
                         currentPage={currentPage}
                         totalItems={totalCount}
                         pageSize={pageSize}
-                        onPageChange={setCurrentPage}
+                        onPageChange={handlePageChange}
                         onPageSizeChange={setPageSize}
                         sortBy={sortBy}
                         onSortChange={setSortBy}
@@ -688,6 +785,7 @@ export default function HomePage() {
 
           <FilterSidebar
             filterOptions={filterOptions}
+            facetCounts={facetCounts}
             selectedAreas={selectedAreas}
             selectedVendors={selectedVendors}
             selectedTypes={selectedTypes}

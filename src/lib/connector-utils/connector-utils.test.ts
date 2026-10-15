@@ -26,8 +26,41 @@ import {
   getDaysSinceUpdate,
   formatDaysSince,
   sortConnectors,
+  pickOverviewUrl,
+  getConnectorDocsUrlMap,
+  HIDDEN_PACKAGES,
+  isHiddenPackage,
+  __resetSitemapCacheForTests,
 } from './connector-utils';
 import { BallerinaPackage } from '@/types/connector';
+
+// Mock fetch and localStorage globally, used only by the getConnectorDocsUrlMap tests below.
+const mockFetch = jest.fn();
+global.fetch = mockFetch;
+
+const sitemapStorageStore: Record<string, string> = {};
+const sitemapStorageMock = {
+  getItem: jest.fn((key: string) => sitemapStorageStore[key] ?? null),
+  setItem: jest.fn((key: string, value: string) => {
+    sitemapStorageStore[key] = value;
+  }),
+  removeItem: jest.fn((key: string) => {
+    delete sitemapStorageStore[key];
+  }),
+  clear: jest.fn(() => {
+    Object.keys(sitemapStorageStore).forEach((key) => delete sitemapStorageStore[key]);
+  }),
+};
+Object.defineProperty(window, 'localStorage', {
+  value: sitemapStorageMock,
+  writable: true,
+  configurable: true,
+});
+Object.defineProperty(global, 'localStorage', {
+  value: sitemapStorageMock,
+  writable: true,
+  configurable: true,
+});
 
 // Helper to create mock packages
 const createMockPackage = (overrides: Partial<BallerinaPackage> = {}): BallerinaPackage => ({
@@ -410,6 +443,112 @@ describe('connector-utils', () => {
 
       const result = sortConnectors(connectorsWithUndefined, 'pullCount-desc');
       expect(result.map((c) => c.totalPullCount)).toEqual([100, undefined]);
+    });
+  });
+
+  describe('pickOverviewUrl', () => {
+    it('should return the lone URL when only one page exists', () => {
+      expect(
+        pickOverviewUrl(['https://example.com/catalog/built-in/http/action-reference'], 'http')
+      ).toBe('https://example.com/catalog/built-in/http/action-reference');
+    });
+
+    it('should prefer a slug containing "overview" when present', () => {
+      const urls = [
+        'https://example.com/catalog/built-in/http/action-reference',
+        'https://example.com/catalog/built-in/http/overview',
+        'https://example.com/catalog/built-in/http/trigger-reference',
+      ];
+      expect(pickOverviewUrl(urls, 'http')).toBe(
+        'https://example.com/catalog/built-in/http/overview'
+      );
+    });
+
+    it('should fall back to the bare package-root URL when no "overview" slug exists (see #2554)', () => {
+      // graphql/grpc/mqtt and other Ballerina standard-library "Built-in" modules
+      // publish their overview content at the bare package-root URL itself.
+      const urls = [
+        'https://wso2.com/integration-platform/docs/connectors/catalog/built-in/graphql',
+        'https://wso2.com/integration-platform/docs/connectors/catalog/built-in/graphql/action-reference',
+        'https://wso2.com/integration-platform/docs/connectors/catalog/built-in/graphql/example',
+        'https://wso2.com/integration-platform/docs/connectors/catalog/built-in/graphql/trigger-reference',
+      ];
+      expect(pickOverviewUrl(urls, 'graphql')).toBe(
+        'https://wso2.com/integration-platform/docs/connectors/catalog/built-in/graphql'
+      );
+    });
+
+    it('should return undefined when there are multiple pages and none is the overview', () => {
+      const urls = [
+        'https://example.com/catalog/built-in/foo/action-reference',
+        'https://example.com/catalog/built-in/foo/example',
+      ];
+      expect(pickOverviewUrl(urls, 'foo')).toBeUndefined();
+    });
+  });
+
+  describe('getConnectorDocsUrlMap', () => {
+    beforeEach(() => {
+      mockFetch.mockReset();
+      Object.keys(sitemapStorageStore).forEach((key) => delete sitemapStorageStore[key]);
+      __resetSitemapCacheForTests();
+    });
+
+    it('should discover a bare package-root overview page for a Built-in module (see #2554)', async () => {
+      const sitemapXml = `<?xml version="1.0" encoding="UTF-8"?>
+        <urlset>
+          <url><loc>https://wso2.com/integration-platform/docs/connectors/catalog/built-in/graphql</loc></url>
+          <url><loc>https://wso2.com/integration-platform/docs/connectors/catalog/built-in/graphql/action-reference</loc></url>
+          <url><loc>https://wso2.com/integration-platform/docs/connectors/catalog/built-in/graphql/example</loc></url>
+          <url><loc>https://wso2.com/integration-platform/docs/connectors/catalog/built-in/graphql/trigger-reference</loc></url>
+          <url><loc>https://wso2.com/integration-platform/docs/connectors/catalog/built-in/http/action-reference</loc></url>
+          <url><loc>https://wso2.com/integration-platform/docs/connectors/catalog/built-in/http/overview</loc></url>
+        </urlset>`;
+      mockFetch.mockResolvedValue({ ok: true, text: () => Promise.resolve(sitemapXml) });
+
+      const docsUrlMap = await getConnectorDocsUrlMap();
+
+      expect(docsUrlMap.get('graphql')).toBe(
+        'https://wso2.com/integration-platform/docs/connectors/catalog/built-in/graphql'
+      );
+      expect(docsUrlMap.get('http')).toBe(
+        'https://wso2.com/integration-platform/docs/connectors/catalog/built-in/http/overview'
+      );
+    });
+  });
+
+  describe('isHiddenPackage', () => {
+    it('hides a bare-name entry under every org, and with no org at all', () => {
+      HIDDEN_PACKAGES.add('bare-hidden');
+      try {
+        expect(isHiddenPackage({ name: 'bare-hidden' })).toBe(true);
+        expect(isHiddenPackage({ name: 'bare-hidden', organization: 'ballerina' })).toBe(true);
+        expect(isHiddenPackage({ name: 'bare-hidden', organization: 'ballerinax' })).toBe(true);
+      } finally {
+        HIDDEN_PACKAGES.delete('bare-hidden');
+      }
+    });
+
+    it('hides only the matching org for an "org/name" entry', () => {
+      HIDDEN_PACKAGES.add('ballerina/dual-org');
+      try {
+        expect(isHiddenPackage({ name: 'dual-org', organization: 'ballerina' })).toBe(true);
+        expect(isHiddenPackage({ name: 'dual-org', organization: 'ballerinax' })).toBe(false);
+        // Without an org an "org/name" entry cannot match
+        expect(isHiddenPackage({ name: 'dual-org' })).toBe(false);
+      } finally {
+        HIDDEN_PACKAGES.delete('ballerina/dual-org');
+      }
+    });
+
+    it('does not hide packages that are not listed', () => {
+      expect(isHiddenPackage({ name: 'not-in-the-list', organization: 'ballerinax' })).toBe(false);
+      expect(isHiddenPackage({ name: 'not-in-the-list' })).toBe(false);
+    });
+
+    it('loads the shipped list from hidden-packages.json', () => {
+      expect(HIDDEN_PACKAGES.size).toBe(107);
+      expect(HIDDEN_PACKAGES.has('sql')).toBe(true);
     });
   });
 });

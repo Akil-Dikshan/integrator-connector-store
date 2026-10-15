@@ -29,6 +29,7 @@ import {
   useMediaQuery,
   Button,
   CircularProgress,
+  Skeleton,
   Accordion,
   AccordionSummary,
   AccordionDetails,
@@ -48,6 +49,7 @@ import {
   getDisplayName,
   getConnectorDocsUrl,
   getConnectorDocsUrlMap,
+  isHiddenPackage,
 } from '@/lib/connector-utils';
 import MarkdownContent from '@/components/MarkdownContent';
 import Footer from '@/components/Footer';
@@ -115,11 +117,13 @@ export default function ConnectorDetailPage() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const isMobile = useMediaQuery((theme: any) => theme.breakpoints.down('lg'));
   const { org, name, version } = useParams<{ org: string; name: string; version?: string }>();
+  const hidden = !!org && !!name && isHiddenPackage({ name, organization: org });
   const navigate = useNavigate();
 
   const [packageDetails, setPackageDetails] = useState<PackageDetails | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [retryCount, setRetryCount] = useState(0);
   const [miConnector, setMiConnector] = useState<{
     name: string;
     documentationUrl?: string;
@@ -135,6 +139,8 @@ export default function ConnectorDetailPage() {
   }, [mode]);
 
   useEffect(() => {
+    let cancelled = false;
+
     const loadPackageDetails = async () => {
       if (!org || !name) {
         setError('Invalid package URL');
@@ -149,25 +155,52 @@ export default function ConnectorDetailPage() {
         return;
       }
 
+      if (hidden) {
+        setPackageDetails(null);
+        setLoading(false);
+        return;
+      }
+
       try {
         setLoading(true);
+        setError(null);
         const details = await fetchPackageDetails(org, name, version);
+        if (cancelled) return;
         setPackageDetails(details);
-
-        // Check for matching MI connector
-        const miConnectorDetails = await fetchMIConnector(name);
-        if (miConnectorDetails?.documentationUrl) {
-          setMiConnector(miConnectorDetails);
-        }
       } catch (err) {
+        if (cancelled) return;
         const errorMessage = err instanceof Error ? err.message : String(err);
         setError(errorMessage || 'Failed to load connector details.');
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     };
     loadPackageDetails();
-  }, [org, name, version]);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [org, name, version, retryCount, hidden]);
+
+  // Look up the matching MI connector separately (a "View MI Connector" cross-link is
+  // a nice-to-have, not core content) so a slow/hanging lookup here can never block the
+  // main page from appearing once fetchPackageDetails above has already resolved — see
+  // https://github.com/wso2/product-integrator/issues/2553.
+  useEffect(() => {
+    setMiConnector(null);
+    if (!name || hidden) return;
+
+    let cancelled = false;
+    fetchMIConnector(name).then((miConnectorDetails) => {
+      if (!cancelled && miConnectorDetails?.documentationUrl) {
+        setMiConnector(miConnectorDetails);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [name, hidden]);
 
   // Prefetch sitemap in parallel with fetchPackageDetails so it's ready (or cached)
   // by the time package details finish loading.
@@ -527,10 +560,27 @@ export default function ConnectorDetailPage() {
         </Container>
       </Box>
 
-      {loading ? (
-        <Box display="flex" justifyContent="center" alignItems="center" minHeight={400}>
-          <CircularProgress />
-        </Box>
+      {loading && !hidden ? (
+        <Container maxWidth="xl" sx={{ py: 5 }}>
+          <Box sx={{ display: 'flex', gap: 6 }}>
+            <Box sx={{ flex: 1, minWidth: 0 }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 3, mb: 5 }}>
+                <Skeleton variant="rounded" width={64} height={64} />
+                <Skeleton variant="text" width={240} height={48} />
+              </Box>
+              <Skeleton variant="text" width="90%" />
+              <Skeleton variant="text" width="95%" />
+              <Skeleton variant="text" width="70%" sx={{ mb: 2 }} />
+              <Skeleton variant="text" width="85%" />
+              <Skeleton variant="text" width="60%" />
+            </Box>
+            {!isMobile && (
+              <Box sx={{ width: 340, flexShrink: 0 }}>
+                <Skeleton variant="rounded" height={320} />
+              </Box>
+            )}
+          </Box>
+        </Container>
       ) : !packageDetails ? (
         <Container maxWidth="xl" sx={{ py: 5 }}>
           <Box
@@ -541,11 +591,26 @@ export default function ConnectorDetailPage() {
             minHeight={400}
           >
             <Typography variant="h5" color="error" gutterBottom>
-              Failed to load connector details
+              {hidden ? 'Connector not found' : 'Failed to load connector details'}
             </Typography>
-            <Typography variant="body1" color="text.secondary">
-              {error || 'The connector could not be found or is unavailable.'}
+            <Typography variant="body1" color="text.secondary" sx={{ mb: 3 }}>
+              {hidden
+                ? 'This connector is not available in the store.'
+                : error || 'The connector could not be found or is unavailable.'}
             </Typography>
+            {hidden ? (
+              <Button variant="contained" color="primary" onClick={() => navigate('/')}>
+                Back to store
+              </Button>
+            ) : (
+              <Button
+                variant="contained"
+                color="primary"
+                onClick={() => setRetryCount((c) => c + 1)}
+              >
+                Retry
+              </Button>
+            )}
           </Box>
         </Container>
       ) : (

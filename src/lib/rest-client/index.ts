@@ -18,10 +18,18 @@
 
 export {
   searchPackages,
+  refreshCatalog,
+  getFacetCounts,
   fetchAllPackagesForFilters,
   fetchFiltersProgressively,
   fetchLatestConnectorEntries,
   fetchPackageVersions,
   fetchPackageDetails,
 } from './rest-client';
-export type { SortOption, SearchParams, SearchResponse, LatestConnectorEntry } from './rest-client';
+export type {
+  SortOption,
+  SearchParams,
+  SearchResponse,
+  LatestConnectorEntry,
+  FacetCounts,
+} from './rest-client';
