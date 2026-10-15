@@ -21,11 +21,13 @@ import { useNavigate } from 'react-router-dom';
 import { Box, Button, Container, Typography, useColorScheme } from '@wso2/oxygen-ui';
 import WSO2Header from '@/components/WSO2Header';
 import Footer from '@/components/Footer';
+import { useNoIndexMeta } from '@/lib/seo/useNoIndexMeta';
 
 /** Shown for any URL the app has no page for. */
 export default function NotFoundPage() {
   const { mode } = useColorScheme();
   const navigate = useNavigate();
+  useNoIndexMeta(true, 'Page not found - WSO2 Integration Platform Connectors');
 
   const effectiveMode = useMemo(() => {
     if (mode === 'system') {

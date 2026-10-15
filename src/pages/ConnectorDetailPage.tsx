@@ -42,6 +42,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { PackageDetails } from '@/types/connector';
 import { fetchPackageDetails } from '@/lib/rest-client';
 import { isNotFoundError } from '@/lib/rest-client/errors';
+import { useNoIndexMeta } from '@/lib/seo/useNoIndexMeta';
 import { fetchMIConnector } from '@/lib/mi-connector';
 import {
   parseConnectorMetadata,
@@ -260,6 +261,8 @@ export default function ConnectorDetailPage() {
     () => (packageDetails ? extractOverview(String(packageDetails?.readme || '')) : ''),
     [packageDetails]
   );
+
+  useNoIndexMeta(missing, 'Connector not found - WSO2 Integration Platform Connectors');
 
   // Update meta tags dynamically when package details load
   useEffect(() => {
