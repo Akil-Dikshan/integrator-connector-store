@@ -774,9 +774,10 @@ export function extractFilterOptions(connectors: BallerinaPackage[]): FilterOpti
     metadata.type.forEach((t) => types.add(t));
   });
 
-  // Hide "Other" from the Type filter — connectors with Type/Other or no Type tag
-  // should still appear in results but not be filterable by type
+  // Hide "Other" from the Type and Vendor filters — connectors with Type/Other, Vendor/Other
+  // or no such tag should still appear in results but not be filterable by it
   types.delete(METADATA_FALLBACK);
+  vendors.delete(METADATA_FALLBACK);
 
   return {
     areas: Array.from(areas).sort(),
