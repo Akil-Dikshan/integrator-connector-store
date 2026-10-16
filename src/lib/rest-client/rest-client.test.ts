@@ -1003,6 +1003,26 @@ describe('rest-client', () => {
       expect(batchRequests()).toHaveLength(0);
     });
 
+    it('spreads the default Most Popular view across Areas, but not a Type-only filter', async () => {
+      const area = (name: string, areaTag: string, rate: number) =>
+        listPackage(name, ['Type/Connector', 'Vendor/Acme', `Area/${areaTag}`], rate);
+      mockLoadCatalogue.mockResolvedValue({
+        ...priorityList,
+        packages: [
+          area('crm-a', 'CRM & Sales', 100),
+          area('crm-b', 'CRM & Sales', 90),
+          area('erp-a', 'ERP & Business Operations', 50),
+          area('misc-a', 'Analytics', 40),
+        ],
+      });
+
+      const byDefault = await searchPackages(base);
+      const typeOnly = await searchPackages({ ...base, types: ['Connector'] });
+
+      expect(names(byDefault)).toEqual(['crm-a', 'erp-a', 'crm-b', 'misc-a']);
+      expect(names(typeOnly)).toEqual(['crm-a', 'crm-b', 'erp-a', 'misc-a']);
+    });
+
     it('pages and re-sorts the unfiltered catalog in memory', async () => {
       const page2 = await searchPackages({ ...base, offset: 1, limit: 1 });
       const byName = await searchPackages({ ...base, sort: 'name-desc' });

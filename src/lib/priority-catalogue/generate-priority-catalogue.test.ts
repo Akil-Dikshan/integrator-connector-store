@@ -115,6 +115,28 @@ describe('buildPriorityCatalogue', () => {
     expect(names(page)).toEqual(['b', 'a', 'c']);
   });
 
+  it('spreads the rate order across Areas, one package per Area per round', () => {
+    const inArea = (name: string, area: string) =>
+      raw('ballerinax', name, { keywords: [`Area/${area}`, 'Type/Connector'] });
+    const page = generator.buildPriorityCatalogue({
+      packages: [
+        inArea('crm-a', 'CRM & Sales'),
+        inArea('crm-b', 'CRM & Sales'),
+        inArea('erp-a', 'ERP & Business Operations'),
+        inArea('misc-a', 'Analytics'),
+      ],
+      ranking: {
+        'ballerinax/crm-a': rate(100),
+        'ballerinax/crm-b': rate(90),
+        'ballerinax/erp-a': rate(50),
+        'ballerinax/misc-a': rate(40),
+      },
+      hidden: new Set(),
+    });
+    expect(names(page)).toEqual(['crm-a', 'erp-a', 'crm-b', 'misc-a']);
+    expect(page.totalCount).toBe(4);
+  });
+
   it('keeps same-named packages from different orgs: identity is org/name', () => {
     const page = generator.buildPriorityCatalogue({
       packages: [raw('ballerina', 'dup'), raw('ballerinax', 'dup'), raw('ballerinax', 'ok')],
