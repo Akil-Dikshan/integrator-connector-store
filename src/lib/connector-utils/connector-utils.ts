@@ -745,7 +745,9 @@ export function getDisplayName(packageName: string, vendor?: string, keywords?: 
 export function parseConnectorMetadata(keywords: string[]): ConnectorMetadata {
   const areaKeywords = keywords
     .filter((k) => k.startsWith('Area/'))
-    .map((k) => k.replace('Area/', ''));
+    .map((k) => k.replace('Area/', ''))
+    // "Built-in" is no longer a user-facing area (standard-library marker only).
+    .filter((a) => a !== 'Built-in');
   const area = areaKeywords.length > 0 ? areaKeywords : [METADATA_FALLBACK];
   const vendor =
     keywords.find((k) => k.startsWith('Vendor/'))?.replace('Vendor/', '') || METADATA_FALLBACK;

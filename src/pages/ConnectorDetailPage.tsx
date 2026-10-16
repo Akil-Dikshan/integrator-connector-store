@@ -401,7 +401,8 @@ export default function ConnectorDetailPage() {
           {details.keywords
             .filter(
               (tag) =>
-                tag.startsWith('Area/') || tag.startsWith('Vendor/') || tag.startsWith('Type/')
+                tag !== 'Area/Built-in' &&
+                (tag.startsWith('Area/') || tag.startsWith('Vendor/') || tag.startsWith('Type/'))
             )
             .map((tag) => {
               const value = tag.split('/').slice(1).join('/');

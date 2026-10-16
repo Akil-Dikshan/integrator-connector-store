@@ -611,11 +611,11 @@ function filterByExactKeywords(
     values.length === 0 ||
     values.some((value) => pkg.keywords.includes(`${prefix}${value}`));
 
+  const hasArea = (pkg: BallerinaPackage) => hasTag(pkg, 'Area/', params.areas);
+
   return packages.filter(
     (pkg) =>
-      hasTag(pkg, 'Area/', params.areas) &&
-      hasTag(pkg, 'Vendor/', params.vendors) &&
-      hasTag(pkg, 'Type/', params.types)
+      hasArea(pkg) && hasTag(pkg, 'Vendor/', params.vendors) && hasTag(pkg, 'Type/', params.types)
   );
 }
 

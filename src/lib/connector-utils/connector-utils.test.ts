@@ -169,9 +169,26 @@ describe('connector-utils', () => {
     });
 
     it('should extract multiple area tags', () => {
-      const keywords = ['Area/Built-in', 'Area/Communication', 'Type/Connector'];
+      const keywords = ['Area/Database', 'Area/Communication', 'Type/Connector'];
       const result = parseConnectorMetadata(keywords);
-      expect(result.area).toEqual(['Built-in', 'Communication']);
+      expect(result.area).toEqual(['Database', 'Communication']);
+    });
+
+    it('should drop the Built-in area tag', () => {
+      expect(parseConnectorMetadata(['Area/Built-in', 'Area/Database']).area).toEqual(['Database']);
+      expect(parseConnectorMetadata(['Area/Built-in', 'Type/Library']).area).toEqual(['Other']);
+    });
+
+    it('should keep the new standard library areas alongside Built-in', () => {
+      expect(parseConnectorMetadata(['Area/Network & Protocols', 'Type/Library']).area).toEqual([
+        'Network & Protocols',
+      ]);
+      expect(
+        parseConnectorMetadata(['Area/Data Formats & Utilities', 'Area/Built-in']).area
+      ).toEqual(['Data Formats & Utilities']);
+      expect(parseConnectorMetadata(['Area/Built-in', 'Area/Communication']).area).toEqual([
+        'Communication',
+      ]);
     });
 
     it('should extract multiple type tags', () => {
