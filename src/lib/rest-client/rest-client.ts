@@ -31,6 +31,7 @@ import {
   PriorityCatalogue,
   PriorityCatalogueCard,
 } from '../priority-catalogue';
+import { interleaveByArea } from '../priority-catalogue/area-interleave';
 
 // Shape of each entry in ranking-data.json (see scripts/generate-ranking-data.js).
 // Precomputed, build-time download-rate ranking -- see that script for the full
@@ -1011,6 +1012,20 @@ export async function getFacetCounts(
 }
 
 /**
+ * The default "Most Popular" view: no search and no Area/Vendor/Type filter. Only this
+ * view is spread across Areas (see interleaveByArea); filtered views keep the plain rate order.
+ */
+function isDefaultMostPopular(params: SearchParams): boolean {
+  return (
+    params.sort === 'pullCount-desc' &&
+    !params.query &&
+    !params.areas?.length &&
+    !params.vendors?.length &&
+    !params.types?.length
+  );
+}
+
+/**
  * Serves views that need no Central call: every sort of the unfiltered catalog, plus a
  * Type-only filter. Type/Connector alone matches most of the catalog (about 600
  * packages, ~800 KB, ~9 s from Central), so it's cheaper to filter the in-memory list.
@@ -1018,7 +1033,8 @@ export async function getFacetCounts(
 function searchCatalog(catalog: Catalog, params: SearchParams): SearchResponse {
   const visible = filterByExactKeywords(catalog.packages, params);
   const rankingData = params.sort === 'pullCount-desc' ? catalog.ranking : {};
-  const sorted = sortMergedPackages(visible, params.sort, undefined, rankingData);
+  const ranked = sortMergedPackages(visible, params.sort, undefined, rankingData);
+  const sorted = isDefaultMostPopular(params) ? interleaveByArea(ranked) : ranked;
   return {
     packages: sorted.slice(params.offset, params.offset + params.limit),
     count: sorted.length,
@@ -1096,7 +1112,9 @@ async function searchCentral(
     const rankingData =
       params.sort === 'pullCount-desc' ? (catalogRanking ?? (await loadRankingData())) : {};
     // Copy: the cached catalog is shared and must never be sorted/mutated in place.
-    const sorted = sortMergedPackages([...filtered], params.sort, params.query, rankingData);
+    const ranked = sortMergedPackages([...filtered], params.sort, params.query, rankingData);
+    // Same ordering as the catalogue path (searchCatalog), for the default view.
+    const sorted = isDefaultMostPopular(params) ? interleaveByArea(ranked) : ranked;
     const paged = sorted.slice(params.offset, params.offset + params.limit);
     return {
       packages: paged,

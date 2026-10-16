@@ -7,7 +7,8 @@
  *
  *   1. fetch every package from Central (scripts/lib/central.js),
  *   2. drop hidden and deprecated packages (the lists the app uses),
- *   3. order what is left by the download-rate ranking in ranking-data.json,
+ *   3. order what is left by the download-rate ranking in ranking-data.json, then spread it
+ *      across Areas, one package per Area per round (src/lib/priority-catalogue/area-interleave.js),
  *   4. write the result to public/priority-catalogue.json.
  *
  * It only READS public/ranking-data.json (never writes it). The output is gitignored.
@@ -34,6 +35,7 @@ const OUTPUT_PATH = path.join(PUBLIC_DIR, 'priority-catalogue.json');
 const RANKING_PATH = path.join(PUBLIC_DIR, 'ranking-data.json');
 
 const { fetchAllPackages } = require('./lib/central');
+const { interleaveByArea } = require('../src/lib/priority-catalogue/area-interleave');
 
 // A catalogue smaller than this means Central answered badly; don't publish it.
 const MIN_PACKAGES = 100;
@@ -120,7 +122,7 @@ function validate(page) {
 
 /**
  * Pure: the packages the default view lists (hidden ones removed), in "Most Popular"
- * order. Ties keep input order. `packages` must already be unique per org/name, as
+ * order: download rate, spread across Areas. Ties keep input order. `packages` must already be unique per org/name, as
  * fetchAllPackages returns them.
  */
 function buildPriorityCatalogue({
@@ -134,12 +136,14 @@ function buildPriorityCatalogue({
     .filter((pkg) => !isHidden(pkg, hidden))
     .map((pkg) => ({ pkg, score: rateScore(pkg, ranking) }));
   scored.sort((a, b) => b.score - a.score);
+  // Same function the app applies to the default view (searchCatalog in rest-client.ts).
+  const ordered = interleaveByArea(scored.map(({ pkg }) => pkg));
 
   const page = {
     generatedAt,
     centralCount,
-    totalCount: scored.length,
-    packages: scored.map(({ pkg }) => toCard(pkg, ranking)),
+    totalCount: ordered.length,
+    packages: ordered.map((pkg) => toCard(pkg, ranking)),
   };
   validate(page);
   return page;
