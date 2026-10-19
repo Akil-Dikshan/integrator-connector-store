@@ -270,7 +270,7 @@ describe('connector-utils', () => {
     it('lower-cases and turns . _ - into single spaces', () => {
       expect(normalizeForSearch('AWS.SNS')).toBe('aws sns');
       expect(normalizeForSearch('  aws__sns - topic ')).toBe('aws sns topic');
-      expect(normalizeForSearch('Dynamics 365')).toBe('dynamics 365');
+      expect(normalizeForSearch('Dynamics  365')).toBe('dynamics 365');
     });
   });
 
