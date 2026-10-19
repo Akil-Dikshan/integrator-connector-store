@@ -103,7 +103,6 @@
   "trigger.shopify",
   "trigger.slack",
   "trigger.twilio",
-  "workflow",
   "wso2.controlplane",
   "yaml",
   "zipkin"
