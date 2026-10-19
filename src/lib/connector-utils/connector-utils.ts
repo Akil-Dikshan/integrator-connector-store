@@ -507,9 +507,10 @@ export function getConnectorDocsUrlMap(): Promise<Map<string, string>> {
     const xml = await fetchDocsSitemap();
 
     const urlsByPackage = new Map<string, string[]>();
-    // The trailing /{slug} is optional so a bare .../catalog/{category}/{packageName}
-    // URL (no slug at all) is captured too — see pickOverviewUrl.
-    const regex = /https:\/\/[^\s<]*\/connectors\/catalog\/[^/<]+\/([^/<]+)(?:\/[^/<\s]+)?/g;
+    // The rest of the path after the package name is optional, so a bare
+    // .../catalog/{category}/{packageName} URL is captured too — see pickOverviewUrl. It may
+    // be more than one segment (e.g. twilio/4.0.x/overview), so the whole path is kept.
+    const regex = /https:\/\/[^\s<]*\/connectors\/catalog\/[^/<]+\/([^/<]+)(?:\/[^<\s]+)?/g;
     let match;
     while ((match = regex.exec(xml)) !== null) {
       const [url, packageName] = match;

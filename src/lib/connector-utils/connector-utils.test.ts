@@ -567,6 +567,20 @@ describe('connector-utils', () => {
       );
     });
 
+    it('keeps the full path for a versioned docs folder such as twilio/4.0.x/overview', async () => {
+      const sitemapXml = `<urlset>
+        <url><loc>https://wso2.com/integration-platform/docs/connectors/catalog/communication/twilio/4.0.x/actions</loc></url>
+        <url><loc>https://wso2.com/integration-platform/docs/connectors/catalog/communication/twilio/4.0.x/overview</loc></url>
+      </urlset>`;
+      mockFetch.mockResolvedValue({ ok: true, text: () => Promise.resolve(sitemapXml) });
+
+      const docsUrlMap = await getConnectorDocsUrlMap();
+
+      expect(docsUrlMap.get('twilio')).toBe(
+        'https://wso2.com/integration-platform/docs/connectors/catalog/communication/twilio/4.0.x/overview'
+      );
+    });
+
     const s3Sitemap = `<urlset>
       <url><loc>https://wso2.com/integration-platform/docs/connectors/catalog/storage-file/aws.s3/action-reference</loc></url>
       <url><loc>https://wso2.com/integration-platform/docs/connectors/catalog/storage-file/aws.s3/overview</loc></url>
