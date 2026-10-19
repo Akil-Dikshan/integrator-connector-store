@@ -683,6 +683,19 @@ export function getConnectorDocsUrlMap(): Promise<Map<string, string>> {
 }
 
 /**
+ * Lower-cases text and turns the separators used in package names (`.`, `_`, `-`) into
+ * single spaces, so a search for "aws sns" matches the package `aws.sns` and a search for
+ * "aws.sns" matches the keyword "aws sns". Apply it to both the query and the text searched.
+ */
+export function normalizeForSearch(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[._-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
  * Converts a package name to a display name.
  *
  * Resolution order:
@@ -759,6 +772,14 @@ export function parseConnectorMetadata(keywords: string[]): ConnectorMetadata {
 }
 
 /**
+ * Case-insensitive A to Z order for filter options. The default `.sort()` compares raw
+ * character codes, which puts every lowercase-leading name (e.g. "dataflowkit") after "Z".
+ */
+function compareOptions(a: string, b: string): number {
+  return a.localeCompare(b, undefined, { sensitivity: 'base' }) || (a < b ? -1 : a > b ? 1 : 0);
+}
+
+/**
  * Extracts all unique filter options from connectors
  * Includes all connector types to populate filter dropdowns
  */
@@ -780,9 +801,9 @@ export function extractFilterOptions(connectors: BallerinaPackage[]): FilterOpti
   vendors.delete(METADATA_FALLBACK);
 
   return {
-    areas: Array.from(areas).sort(),
-    vendors: Array.from(vendors).sort(),
-    types: Array.from(types).sort(),
+    areas: Array.from(areas).sort(compareOptions),
+    vendors: Array.from(vendors).sort(compareOptions),
+    types: Array.from(types).sort(compareOptions),
   };
 }
 
@@ -816,7 +837,7 @@ export function filterConnectors(
 
     // Search query
     if (filters.searchQuery) {
-      const query = filters.searchQuery.toLowerCase();
+      const query = normalizeForSearch(filters.searchQuery);
       const displayName = getDisplayName(connector.name, metadata.vendor);
       const searchableText = [
         connector.name,
@@ -826,11 +847,9 @@ export function filterConnectors(
         ...metadata.area,
         ...metadata.type,
         metadata.vendor,
-      ]
-        .join(' ')
-        .toLowerCase();
+      ].join(' ');
 
-      if (!searchableText.includes(query)) {
+      if (!normalizeForSearch(searchableText).includes(query)) {
         return false;
       }
     }

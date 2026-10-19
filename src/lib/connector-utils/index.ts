@@ -1,5 +1,6 @@
 export {
   getDisplayName,
+  normalizeForSearch,
   parseConnectorMetadata,
   extractFilterOptions,
   filterConnectors,
