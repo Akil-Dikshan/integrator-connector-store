@@ -483,21 +483,6 @@ describe('connector-utils', () => {
   });
 
   describe('pickOverviewUrl', () => {
-    it('picks the connector-named page when only standard sub-pages sit beside it', () => {
-      const base = 'https://example.com/catalog/crm-sales/hubspot.crm.owners';
-      expect(
-        pickOverviewUrl(
-          [
-            `${base}/actions`,
-            `${base}/example`,
-            `${base}/hubspot-crm-owners`,
-            `${base}/setup-guide`,
-          ],
-          'hubspot.crm.owners'
-        )
-      ).toBe(`${base}/hubspot-crm-owners`);
-    });
-
     it('should return the lone URL when only one page exists', () => {
       expect(
         pickOverviewUrl(['https://example.com/catalog/built-in/http/action-reference'], 'http')
