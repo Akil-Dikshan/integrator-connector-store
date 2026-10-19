@@ -21,6 +21,7 @@ import {
   parseConnectorMetadata,
   extractFilterOptions,
   filterConnectors,
+  normalizeForSearch,
   formatPullCount,
   formatDate,
   getDaysSinceUpdate,
@@ -223,6 +224,24 @@ describe('connector-utils', () => {
       });
     });
 
+    it('should sort options A to Z ignoring case, so lowercase names are not pushed to the end', () => {
+      const connectors = [
+        createMockPackage({ keywords: ['Area/Finance', 'Vendor/Stripe', 'Type/Connector'] }),
+        createMockPackage({ keywords: ['Area/Finance', 'Vendor/dataflowkit', 'Type/Connector'] }),
+        createMockPackage({ keywords: ['Area/Finance', 'Vendor/Amazon', 'Type/Connector'] }),
+        createMockPackage({ keywords: ['Area/Finance', 'Vendor/zeta', 'Type/Connector'] }),
+        createMockPackage({ keywords: ['Area/Finance', 'Vendor/Microsoft', 'Type/Connector'] }),
+      ];
+
+      expect(extractFilterOptions(connectors).vendors).toEqual([
+        'Amazon',
+        'dataflowkit',
+        'Microsoft',
+        'Stripe',
+        'zeta',
+      ]);
+    });
+
     it('should hide the "Other" fallback from vendor options', () => {
       const connectors = [
         createMockPackage({ keywords: ['Area/Finance', 'Vendor/Stripe'] }),
@@ -247,6 +266,14 @@ describe('connector-utils', () => {
     });
   });
 
+  describe('normalizeForSearch', () => {
+    it('lower-cases and turns . _ - into single spaces', () => {
+      expect(normalizeForSearch('AWS.SNS')).toBe('aws sns');
+      expect(normalizeForSearch('  aws__sns - topic ')).toBe('aws sns topic');
+      expect(normalizeForSearch('Dynamics 365')).toBe('dynamics 365');
+    });
+  });
+
   describe('filterConnectors', () => {
     const connectors = [
       createMockPackage({
@@ -265,6 +292,20 @@ describe('connector-utils', () => {
         keywords: ['Area/Finance', 'Vendor/PayPal', 'Type/Connector'],
       }),
     ];
+
+    it('should match a spaced query against a dotted package name', () => {
+      const sns = createMockPackage({
+        name: 'aws.sns',
+        summary: 'Notifications',
+        keywords: ['Area/Communication', 'Vendor/Amazon', 'Type/Connector', 'sns'],
+      });
+      const result = filterConnectors([...connectors, sns], {
+        selectedAreas: [],
+        selectedVendors: [],
+        searchQuery: 'aws sns',
+      });
+      expect(result.map((c) => c.name)).toEqual(['aws.sns']);
+    });
 
     it('should filter by area', () => {
       const result = filterConnectors(connectors, {

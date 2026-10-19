@@ -21,6 +21,7 @@ import {
   extractFilterOptions,
   parseConnectorMetadata,
   getDisplayName,
+  normalizeForSearch,
   HIDDEN_PACKAGES,
   isHiddenPackage,
 } from '../connector-utils';
@@ -251,8 +252,8 @@ function toRestSortParam(sortOption: SortOption): string {
  *   3 = no name match (matched on other fields)
  */
 function nameRelevanceScore(pkg: BallerinaPackage, query: string): number {
-  const q = query.toLowerCase();
-  const name = pkg.name.toLowerCase();
+  const q = normalizeForSearch(query);
+  const name = normalizeForSearch(pkg.name);
   if (name === q) return 0;
   if (name.startsWith(q)) return 1;
   if (name.includes(q)) return 2;
@@ -576,11 +577,12 @@ function extractConnectorIdentity(
  */
 function filterByRelevance(packages: BallerinaPackage[], query?: string): BallerinaPackage[] {
   if (!query) return packages;
-  const q = query.trim().toLowerCase();
+  const q = normalizeForSearch(query);
   if (!q) return packages;
   return packages.filter((pkg) => {
-    const name = pkg.name.toLowerCase();
-    const keywords = pkg.keywords.map((k) => k.toLowerCase());
+    // Separators are normalised on both sides so "aws sns" finds the package `aws.sns`.
+    const name = normalizeForSearch(pkg.name);
+    const keywords = pkg.keywords.map(normalizeForSearch);
     return name.includes(q) || keywords.some((k) => k.includes(q));
   });
 }

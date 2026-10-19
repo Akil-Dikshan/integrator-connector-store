@@ -232,6 +232,40 @@ describe('rest-client', () => {
       expect(result.packages.map((p) => p.name)).toEqual(['microsoft.dynamics365.finance.ledger']);
     });
 
+    it('should find a dotted package name from a spaced query like "aws sns"', async () => {
+      // The package is `aws.sns` and its only matching keyword is `sns`, so the exact
+      // phrase "aws sns" appears in neither as written. Separators are normalised.
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve(
+            createMockApiResponse(
+              [
+                {
+                  name: 'aws.sns',
+                  version: '1.0.0',
+                  keywords: ['Area/Communication', 'Vendor/Amazon', 'Type/Connector', 'sns'],
+                },
+                {
+                  name: 'aws.s3',
+                  version: '1.0.0',
+                  keywords: ['Area/Storage', 'Vendor/Amazon', 'Type/Connector', 'sns'],
+                },
+              ],
+              2
+            )
+          ),
+      });
+
+      const result = await searchPackages({
+        query: 'aws sns',
+        offset: 0,
+        limit: 30,
+        sort: 'pullCount-desc',
+      });
+      expect(result.packages.map((p) => p.name)).toEqual(['aws.sns']);
+    });
+
     it('should place the area filter after vendor/type filters in the query', async () => {
       // Regression test for a report attached to issue #1853: area names containing
       // "&" (e.g. "Finance & Accounting") make the search API return 0 results when
