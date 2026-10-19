@@ -43,11 +43,16 @@ const MI_CONNECTOR_ALIASES: Record<string, string> = {
 /**
  * documentationUrl values that are not a connector-specific page: the MI docs
  * home (host mi.docs.wso2.com with at most an /en/<version> path, e.g.
- * /en/4.4.0 or /en/latest) and the Identity Server outbound-auth repos.
+ * /en/4.4.0 or /en/latest), the Identity Server outbound-auth repos and the retired
+ * docs.wso2.com Confluence pages.
  */
 const MI_DOCS_HOST = 'mi.docs.wso2.com';
 const MI_DOCS_HOME_PATH = /^(\/en(\/[^/]+)?)?$/;
-const IGNORED_DOC_URL_PATTERNS = [/wso2-extensions\/identity-outbound-auth-/i];
+const IGNORED_DOC_URL_PATTERNS = [
+  /wso2-extensions\/identity-outbound-auth-/i,
+  // Retired Confluence docs: these links now land on a generic spaces page.
+  /^https?:\/\/docs\.wso2\.com\/display\//i,
+];
 
 interface MIConnector {
   id: string;
