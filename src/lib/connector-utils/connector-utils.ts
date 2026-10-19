@@ -413,12 +413,18 @@ const DOCS_SITEMAP_URLS = [
   `${DOCS_BASE.replace('/connectors/catalog', '')}/sitemap.xml`,
 ];
 
-/** Fetches the first docs sitemap that answers with a success status; throws if none does. */
+/**
+ * Fetches the first docs sitemap that answers with a success status and lists at least one
+ * connector catalog URL (a 200 page with none, e.g. an HTML fallback, is skipped); throws if
+ * no location qualifies.
+ */
 async function fetchDocsSitemap(): Promise<string> {
   for (const url of DOCS_SITEMAP_URLS) {
     try {
       const response = await fetch(url);
-      if (response.ok) return await response.text();
+      if (!response.ok) continue;
+      const xml = await response.text();
+      if (/https:\/\/[^\s<]*\/connectors\/catalog\/[^/<]+\/[^/<\s]+/.test(xml)) return xml;
     } catch {
       /* try the next location */
     }

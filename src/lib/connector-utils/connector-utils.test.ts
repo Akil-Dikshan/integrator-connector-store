@@ -615,6 +615,20 @@ describe('connector-utils', () => {
       expect(docsUrlMap.get('aws.s3')).toBe(s3Url);
     });
 
+    it('falls back when the new sitemap answers 200 but lists no catalog URLs', async () => {
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          text: () => Promise.resolve('<html><body>Not a sitemap</body></html>'),
+        })
+        .mockResolvedValueOnce({ ok: true, text: () => Promise.resolve(s3Sitemap) });
+
+      const docsUrlMap = await getConnectorDocsUrlMap();
+
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+      expect(docsUrlMap.get('aws.s3')).toBe(s3Url);
+    });
+
     it('returns an empty map, without caching it, when no sitemap is available', async () => {
       mockFetch.mockResolvedValue({ ok: false, text: () => Promise.resolve('') });
 
