@@ -431,6 +431,15 @@ interface SitemapCache {
   timestamp: number;
 }
 
+const STANDARD_SUBPAGES = new Set([
+  'setup-guide',
+  'example',
+  'actions',
+  'action-reference',
+  'triggers',
+  'trigger-reference',
+]);
+
 /**
  * Picks the canonical "overview" page URL out of every docs URL published for one
  * package folder (e.g. overview, example, setup-guide, action-reference). The final
@@ -448,7 +457,14 @@ export function pickOverviewUrl(urls: string[], packageName: string): string | u
     /overview/i.test(url.split('/').filter(Boolean).pop() ?? '')
   );
   if (explicitOverview) return explicitOverview;
-  return urls.find((url) => url.split('/').filter(Boolean).pop() === packageName);
+  const byPackageName = urls.find((url) => url.split('/').filter(Boolean).pop() === packageName);
+  if (byPackageName) return byPackageName;
+  // Some connectors (e.g. hubspot.*) name their overview page after the connector. If exactly
+  // one page is left once the standard sub-pages are set aside, that is the overview.
+  const others = urls.filter(
+    (url) => !STANDARD_SUBPAGES.has(url.split('/').filter(Boolean).pop() ?? '')
+  );
+  return others.length === 1 ? others[0] : undefined;
 }
 
 // Module-level promise deduplicates concurrent calls during the same page session
