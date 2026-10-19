@@ -240,7 +240,6 @@ const CONNECTOR_DOCS: Record<string, string> = {
 
   // Database
   'aws.redshift': `${DOCS_BASE}/database/aws.redshift/aws-redshift-connector-overview`,
-  'aws.redshiftdata': `${DOCS_BASE}/database/aws.redshiftdata/aws-redshift-data-connector-overview`,
   cdc: `${DOCS_BASE}/database/cdc/connector-overview`,
   'java.jdbc': `${DOCS_BASE}/database/java.jdbc/java-jdbc-connector-overview`,
   mongodb: `${DOCS_BASE}/database/mongodb/connector-overview`,
@@ -329,7 +328,6 @@ const CONNECTOR_DOCS: Record<string, string> = {
 
   // Storage & Files
   alfresco: `${DOCS_BASE}/storage-file/alfresco/connector-overview`,
-  'aws.s3': `${DOCS_BASE}/storage-file/aws.s3/aws-s3-connector-overview`,
   azure_storage_service: `${DOCS_BASE}/storage-file/azure_storage_service/overview`,
   'microsoft.onedrive': `${DOCS_BASE}/storage-file/microsoft.onedrive/microsoft-onedrive-connector-overview`,
   'microsoft.sharepoint.pages': `${DOCS_BASE}/storage-file/microsoft.sharepoint.pages/connector-overview`,
@@ -571,12 +569,31 @@ const DISPLAY_NAME_OVERRIDES: Record<string, string> = {
   'wso2.icp': 'WSO2 ICP',
 };
 
-// Bumped to v3 to invalidate caches populated before the bare package-root URL fix
-// (see pickOverviewUrl) — otherwise users who visited recently would keep the old,
-// incomplete map for up to SITEMAP_CACHE_TTL after this fix ships.
-const SITEMAP_CACHE_KEY = 'connector_docs_sitemap_v3';
+// Bumped to v4 for the new docs site (new sitemap location, changed page slugs): earlier
+// versions invalidated caches populated before the bare package-root URL fix (see
+// pickOverviewUrl). Without a bump, users who visited recently would keep the old map
+// for up to SITEMAP_CACHE_TTL.
+const SITEMAP_CACHE_KEY = 'connector_docs_sitemap_v4';
 const SITEMAP_CACHE_TTL = 6 * 60 * 60 * 1000; // 6 hours
-const DOCS_SITEMAP_URL = `${DOCS_BASE.replace('/connectors/catalog', '')}/sitemap.xml`;
+// The new docs site publishes its sitemap under /connectors; the previous site published
+// one at the docs root. Tried in this order so the store works on either side of the cutover.
+const DOCS_SITEMAP_URLS = [
+  `${DOCS_BASE.replace('/catalog', '')}/sitemap.xml`,
+  `${DOCS_BASE.replace('/connectors/catalog', '')}/sitemap.xml`,
+];
+
+/** Fetches the first docs sitemap that answers with a success status; throws if none does. */
+async function fetchDocsSitemap(): Promise<string> {
+  for (const url of DOCS_SITEMAP_URLS) {
+    try {
+      const response = await fetch(url);
+      if (response.ok) return await response.text();
+    } catch {
+      /* try the next location */
+    }
+  }
+  throw new Error('docs sitemap is unavailable');
+}
 
 interface SitemapCache {
   entries: [string, string][];
@@ -640,8 +657,7 @@ export function getConnectorDocsUrlMap(): Promise<Map<string, string>> {
 
     // Let network/parse errors propagate so the outer .catch() can reset
     // sitemapPromise and allow a retry on the next call.
-    const response = await fetch(DOCS_SITEMAP_URL);
-    const xml = await response.text();
+    const xml = await fetchDocsSitemap();
 
     const urlsByPackage = new Map<string, string[]>();
     // The trailing /{slug} is optional so a bare .../catalog/{category}/{packageName}

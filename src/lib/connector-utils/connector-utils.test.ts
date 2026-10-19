@@ -27,6 +27,7 @@ import {
   formatDaysSince,
   sortConnectors,
   pickOverviewUrl,
+  getConnectorDocsUrl,
   getConnectorDocsUrlMap,
   HIDDEN_PACKAGES,
   isHiddenPackage,
@@ -550,6 +551,54 @@ describe('connector-utils', () => {
       expect(docsUrlMap.get('http')).toBe(
         'https://wso2.com/integration-platform/docs/connectors/catalog/built-in/http/overview'
       );
+    });
+
+    const s3Sitemap = `<urlset>
+      <url><loc>https://wso2.com/integration-platform/docs/connectors/catalog/storage-file/aws.s3/action-reference</loc></url>
+      <url><loc>https://wso2.com/integration-platform/docs/connectors/catalog/storage-file/aws.s3/overview</loc></url>
+      <url><loc>https://wso2.com/integration-platform/docs/connectors/catalog/storage-file/aws.s3/setup-guide</loc></url>
+    </urlset>`;
+    const s3Url =
+      'https://wso2.com/integration-platform/docs/connectors/catalog/storage-file/aws.s3/overview';
+
+    it('reads the sitemap from the new /connectors location first', async () => {
+      mockFetch.mockResolvedValue({ ok: true, text: () => Promise.resolve(s3Sitemap) });
+
+      const docsUrlMap = await getConnectorDocsUrlMap();
+
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(mockFetch).toHaveBeenCalledWith(
+        'https://wso2.com/integration-platform/docs/connectors/sitemap.xml'
+      );
+      expect(docsUrlMap.get('aws.s3')).toBe(s3Url);
+    });
+
+    it('falls back to the docs-root sitemap when the new one is missing', async () => {
+      mockFetch
+        .mockResolvedValueOnce({ ok: false, text: () => Promise.resolve('<html>404</html>') })
+        .mockResolvedValueOnce({ ok: true, text: () => Promise.resolve(s3Sitemap) });
+
+      const docsUrlMap = await getConnectorDocsUrlMap();
+
+      expect(mockFetch).toHaveBeenNthCalledWith(
+        2,
+        'https://wso2.com/integration-platform/docs/sitemap.xml'
+      );
+      expect(docsUrlMap.get('aws.s3')).toBe(s3Url);
+    });
+
+    it('returns an empty map, without caching it, when no sitemap is available', async () => {
+      mockFetch.mockResolvedValue({ ok: false, text: () => Promise.resolve('') });
+
+      const docsUrlMap = await getConnectorDocsUrlMap();
+
+      expect(docsUrlMap.size).toBe(0);
+      expect(sitemapStorageMock.setItem).not.toHaveBeenCalled();
+    });
+
+    it('does not hardcode aws.s3 or aws.redshiftdata: the sitemap resolves them', () => {
+      expect(getConnectorDocsUrl('aws.s3')).toBeUndefined();
+      expect(getConnectorDocsUrl('aws.redshiftdata')).toBeUndefined();
     });
   });
 
