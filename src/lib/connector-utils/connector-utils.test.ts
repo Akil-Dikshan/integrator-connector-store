@@ -27,7 +27,6 @@ import {
   formatDaysSince,
   sortConnectors,
   pickOverviewUrl,
-  getConnectorDocsUrl,
   getConnectorDocsUrlMap,
   HIDDEN_PACKAGES,
   isHiddenPackage,
@@ -484,6 +483,21 @@ describe('connector-utils', () => {
   });
 
   describe('pickOverviewUrl', () => {
+    it('picks the connector-named page when only standard sub-pages sit beside it', () => {
+      const base = 'https://example.com/catalog/crm-sales/hubspot.crm.owners';
+      expect(
+        pickOverviewUrl(
+          [
+            `${base}/actions`,
+            `${base}/example`,
+            `${base}/hubspot-crm-owners`,
+            `${base}/setup-guide`,
+          ],
+          'hubspot.crm.owners'
+        )
+      ).toBe(`${base}/hubspot-crm-owners`);
+    });
+
     it('should return the lone URL when only one page exists', () => {
       expect(
         pickOverviewUrl(['https://example.com/catalog/built-in/http/action-reference'], 'http')
@@ -594,11 +608,6 @@ describe('connector-utils', () => {
 
       expect(docsUrlMap.size).toBe(0);
       expect(sitemapStorageMock.setItem).not.toHaveBeenCalled();
-    });
-
-    it('does not hardcode aws.s3 or aws.redshiftdata: the sitemap resolves them', () => {
-      expect(getConnectorDocsUrl('aws.s3')).toBeUndefined();
-      expect(getConnectorDocsUrl('aws.redshiftdata')).toBeUndefined();
     });
   });
 

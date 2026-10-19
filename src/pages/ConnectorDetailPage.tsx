@@ -49,7 +49,6 @@ import {
   formatPullCount,
   formatDaysSince,
   getDisplayName,
-  getConnectorDocsUrl,
   getConnectorDocsUrlMap,
   isHiddenPackage,
 } from '@/lib/connector-utils';
@@ -224,14 +223,7 @@ export default function ConnectorDetailPage() {
       return;
     }
 
-    // Manual override — used only for the rare case the sitemap can't resolve
-    const hardcoded = getConnectorDocsUrl(packageDetails.name);
-    if (hardcoded) {
-      setDocsUrl(hardcoded);
-      return;
-    }
-
-    // General case: look up the connector's actual docs URL from the sitemap
+    // Look up the connector's actual docs URL from the sitemap
     setDocsUrl(null);
     let cancelled = false;
     getConnectorDocsUrlMap()
