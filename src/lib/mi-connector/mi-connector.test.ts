@@ -155,6 +155,7 @@ describe('fetchMIConnector', () => {
         'https://github.com/wso2-extensions/identity-outbound-auth-linkedIn/blob/master/docs/README.md',
       ],
       ['https://github.com/wso2-extensions/identity-outbound-auth-sms-otp/blob/master/README.md'],
+      ['https://docs.wso2.com/display/ESBCONNECTORS/Stripe+Connector'],
     ])('drops %s', async (url) => {
       mockMiApi(url);
       const result = await fetchMIConnector('snowflake');
