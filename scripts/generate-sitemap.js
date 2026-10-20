@@ -25,7 +25,12 @@ if (typeof fetch === 'undefined') {
 }
 
 const REST_ENDPOINT = 'https://api.central.ballerina.io/2.0/registry/search-packages';
-const BASE_URL = process.env.SITE_URL || 'https://wso2.com/integration-platform/connectors';
+// The store is served at /integration-platform/store/ (connector pages under it; /connectors/connector/...
+// returns 404). Trailing slashes are trimmed so URLs below can be joined with "/".
+const BASE_URL = (process.env.SITE_URL || 'https://wso2.com/integration-platform/store').replace(
+  /\/+$/,
+  ''
+);
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 const SITEMAP_PATH = path.join(PUBLIC_DIR, 'sitemap.xml');
 
@@ -104,7 +109,8 @@ function buildSitemapUrls(packages) {
 
   // Add homepage
   urls.push({
-    loc: BASE_URL,
+    // Trailing slash: the host returns 404 for /integration-platform/store without it.
+    loc: `${BASE_URL}/`,
     changefreq: 'daily',
     priority: '1.0',
     lastmod: new Date().toISOString().split('T')[0],
