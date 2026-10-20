@@ -175,177 +175,6 @@ export function isHiddenPackage(pkg: Pick<BallerinaPackage, 'name' | 'organizati
 const DOCS_BASE = 'https://wso2.com/integration-platform/docs/connectors/catalog';
 
 /**
- * Package name to documentation URL path (category/package).
- * Connectors in this map get a "Documentation" button instead of "View on Ballerina Central".
- * Reserved for rare cases the sitemap-driven discovery in getConnectorDocsUrlMap() can't
- * resolve on its own; new connectors should NOT need an entry here (see that function).
- */
-const CONNECTOR_DOCS: Record<string, string> = {
-  // AI & Machine Learning
-  'azure.ai.search': `${DOCS_BASE}/ai-ml/azure.ai.search/azure-ai-search-connector-overview`,
-  'azure.ai.search.index': `${DOCS_BASE}/ai-ml/azure.ai.search.index/azure-ai-search-index-connector-overview`,
-  milvus: `${DOCS_BASE}/ai-ml/milvus/connector-overview`,
-  mistral: `${DOCS_BASE}/ai-ml/mistral/connector-overview`,
-  openai: `${DOCS_BASE}/ai-ml/openai/connector-overview`,
-  'openai.audio': `${DOCS_BASE}/ai-ml/openai.audio/openai-audio-connector-overview`,
-  'openai.finetunes': `${DOCS_BASE}/ai-ml/openai.finetunes/openai-fine-tunes-connector-overview`,
-
-  // Cloud & Infrastructure
-  'aws.marketplace.mpe': `${DOCS_BASE}/cloud-infrastructure/aws.marketplace.mpe/aws-marketplace-mpe-connector-overview`,
-  'aws.marketplace.mpm': `${DOCS_BASE}/cloud-infrastructure/aws.marketplace.mpm/aws-marketplace-mpm-connector-overview`,
-  'elastic.elasticcloud': `${DOCS_BASE}/cloud-infrastructure/elastic.elasticcloud/elastic-cloud-connector-overview`,
-
-  // Communication
-  'aws.sns': `${DOCS_BASE}/communication/aws.sns/aws-sns-connector-overview`,
-  discord: `${DOCS_BASE}/communication/discord/connector-overview`,
-  'googleapis.gmail': `${DOCS_BASE}/communication/googleapis.gmail/gmail-connector-overview`,
-  intercom: `${DOCS_BASE}/communication/intercom/connector-overview`,
-  slack: `${DOCS_BASE}/communication/slack/connector-overview`,
-  twilio: `${DOCS_BASE}/communication/twilio/overview`,
-  'zoom.meetings': `${DOCS_BASE}/communication/zoom.meetings/zoom-meetings-connector-overview`,
-  'zoom.scheduler': `${DOCS_BASE}/communication/zoom.scheduler/zoom-scheduler-connector-overview`,
-
-  // CRM & Sales
-  'hubspot.automation.actions': `${DOCS_BASE}/crm-sales/hubspot.automation.actions/hubspot-automation-actions-connector-overview`,
-  'hubspot.crm.associations': `${DOCS_BASE}/crm-sales/hubspot.crm.associations/hubspot-crm-associations`,
-  'hubspot.crm.associations.schema': `${DOCS_BASE}/crm-sales/hubspot.crm.associations.schema/hubspot-crm-associations-schema`,
-  'hubspot.crm.commerce.carts': `${DOCS_BASE}/crm-sales/hubspot.crm.commerce.carts/hubspot-crm-commerce-carts`,
-  'hubspot.crm.commerce.discounts': `${DOCS_BASE}/crm-sales/hubspot.crm.commerce.discounts/hubspot-crm-commerce-discounts`,
-  'hubspot.crm.commerce.orders': `${DOCS_BASE}/crm-sales/hubspot.crm.commerce.orders/hubspot-crm-commerce-orders`,
-  'hubspot.crm.commerce.quotes': `${DOCS_BASE}/crm-sales/hubspot.crm.commerce.quotes/hubspot-crm-commerce-quotes`,
-  'hubspot.crm.commerce.taxes': `${DOCS_BASE}/crm-sales/hubspot.crm.commerce.taxes/hubspot-crm-commerce-taxes`,
-  'hubspot.crm.engagement.meeting': `${DOCS_BASE}/crm-sales/hubspot.crm.engagement.meeting/hubspot-crm-engagement-meeting-connector-overview`,
-  'hubspot.crm.engagement.notes': `${DOCS_BASE}/crm-sales/hubspot.crm.engagement.notes/hubspot-crm-engagement-notes`,
-  'hubspot.crm.engagements.calls': `${DOCS_BASE}/crm-sales/hubspot.crm.engagements.calls/hubspot-crm-engagements-calls`,
-  'hubspot.crm.engagements.communications': `${DOCS_BASE}/crm-sales/hubspot.crm.engagements.communications/hubspot-crm-engagements-communications`,
-  'hubspot.crm.engagements.email': `${DOCS_BASE}/crm-sales/hubspot.crm.engagements.email/hubspot-crm-engagements-email`,
-  'hubspot.crm.engagements.tasks': `${DOCS_BASE}/crm-sales/hubspot.crm.engagements.tasks/hubspot-crm-engagements-tasks`,
-  'hubspot.crm.extensions.timelines': `${DOCS_BASE}/crm-sales/hubspot.crm.extensions.timelines/hubspot-crm-extensions-timelines`,
-  'hubspot.crm.extensions.videoconferencing': `${DOCS_BASE}/crm-sales/hubspot.crm.extensions.videoconferencing/hubspot-crm-extensions-videoconferencing`,
-  'hubspot.crm.import': `${DOCS_BASE}/crm-sales/hubspot.crm.import/hubspot-crm-import`,
-  'hubspot.crm.lists': `${DOCS_BASE}/crm-sales/hubspot.crm.lists/hubspot-crm-lists`,
-  'hubspot.crm.obj.companies': `${DOCS_BASE}/crm-sales/hubspot.crm.obj.companies/hubspot-crm-companies-connector-overview`,
-  'hubspot.crm.obj.contacts': `${DOCS_BASE}/crm-sales/hubspot.crm.obj.contacts/hubspot-crm-contacts-connector-overview`,
-  'hubspot.crm.obj.deals': `${DOCS_BASE}/crm-sales/hubspot.crm.obj.deals/hubspot-crm-deals-connector-overview`,
-  'hubspot.crm.obj.feedback': `${DOCS_BASE}/crm-sales/hubspot.crm.obj.feedback/hubspot-crm-feedback-connector-overview`,
-  'hubspot.crm.obj.leads': `${DOCS_BASE}/crm-sales/hubspot.crm.obj.leads/hubspot-crm-leads-connector-overview`,
-  'hubspot.crm.obj.lineitems': `${DOCS_BASE}/crm-sales/hubspot.crm.obj.lineitems/hubspot-crm-line-items-connector-overview`,
-  'hubspot.crm.obj.products': `${DOCS_BASE}/crm-sales/hubspot.crm.obj.products/hubspot-crm-products`,
-  'hubspot.crm.obj.schemas': `${DOCS_BASE}/crm-sales/hubspot.crm.obj.schemas/hubspot-crm-schemas`,
-  'hubspot.crm.obj.tickets': `${DOCS_BASE}/crm-sales/hubspot.crm.obj.tickets/hubspot-crm-tickets-connector-overview`,
-  'hubspot.crm.owners': `${DOCS_BASE}/crm-sales/hubspot.crm.owners/hubspot-crm-owners`,
-  'hubspot.crm.pipelines': `${DOCS_BASE}/crm-sales/hubspot.crm.pipelines/hubspot-crm-pipelines`,
-  'hubspot.crm.properties': `${DOCS_BASE}/crm-sales/hubspot.crm.properties/hubspot-crm-properties`,
-  salesforce: `${DOCS_BASE}/crm-sales/salesforce/connector-overview`,
-
-  // Database
-  'aws.redshift': `${DOCS_BASE}/database/aws.redshift/aws-redshift-connector-overview`,
-  'aws.redshiftdata': `${DOCS_BASE}/database/aws.redshiftdata/aws-redshift-data-connector-overview`,
-  cdc: `${DOCS_BASE}/database/cdc/connector-overview`,
-  'java.jdbc': `${DOCS_BASE}/database/java.jdbc/java-jdbc-connector-overview`,
-  mongodb: `${DOCS_BASE}/database/mongodb/connector-overview`,
-  mssql: `${DOCS_BASE}/database/mssql/connector-overview`,
-  mysql: `${DOCS_BASE}/database/mysql/connector-overview`,
-  oracledb: `${DOCS_BASE}/database/oracledb/oracle-db-connector-overview`,
-  postgresql: `${DOCS_BASE}/database/postgresql/connector-overview`,
-  redis: `${DOCS_BASE}/database/redis/connector-overview`,
-  snowflake: `${DOCS_BASE}/database/snowflake/connector-overview`,
-
-  // Developer Tools
-  amp: `${DOCS_BASE}/developer-tools/amp/connector-overview`,
-  copybook: `${DOCS_BASE}/developer-tools/copybook/connector-overview`,
-  github: `${DOCS_BASE}/developer-tools/github/connector-overview`,
-  'wso2.apim.catalog': `${DOCS_BASE}/developer-tools/wso2.apim.catalog/apim-catalog-connector-overview`,
-
-  // E-Commerce
-  'sap.commerce.webservices': `${DOCS_BASE}/ecommerce/sap.commerce.webservices/sap-commerce-connector-overview`,
-  'shopify.admin': `${DOCS_BASE}/ecommerce/shopify.admin/shopify-admin-connector-overview`,
-
-  // ERP & Business Operations
-  'guidewire.insnow': `${DOCS_BASE}/erp-business/guidewire.insnow/guidewire-insurancenow-connector-overview`,
-  'ibm.ctg': `${DOCS_BASE}/erp-business/ibm.ctg/ibm-ctg-connector-overview`,
-  sap: `${DOCS_BASE}/erp-business/sap/connector-overview`,
-  'sap.jco': `${DOCS_BASE}/erp-business/sap.jco/overview`,
-  'sap.s4hana.api_sales_inquiry_srv': `${DOCS_BASE}/erp-business/sap.s4hana.api_sales_inquiry_srv/sap-sales-inquiry-connector-overview`,
-  'sap.s4hana.api_sales_order_simulation_srv': `${DOCS_BASE}/erp-business/sap.s4hana.api_sales_order_simulation_srv/sap-sales-order-simulation-connector-overview`,
-  'sap.s4hana.api_sales_order_srv': `${DOCS_BASE}/erp-business/sap.s4hana.api_sales_order_srv/sap-sales-order-connector-overview`,
-  'sap.s4hana.api_sales_quotation_srv': `${DOCS_BASE}/erp-business/sap.s4hana.api_sales_quotation_srv/sap-sales-quotation-connector-overview`,
-  'sap.s4hana.api_salesdistrict_srv': `${DOCS_BASE}/erp-business/sap.s4hana.api_salesdistrict_srv/sap-sales-district-connector-overview`,
-  'sap.s4hana.api_salesorganization_srv': `${DOCS_BASE}/erp-business/sap.s4hana.api_salesorganization_srv/sap-sales-organization-connector-overview`,
-  'sap.s4hana.api_sd_incoterms_srv': `${DOCS_BASE}/erp-business/sap.s4hana.api_sd_incoterms_srv/sap-sd-incoterms-connector-overview`,
-  'sap.s4hana.api_sd_sa_soldtopartydetn': `${DOCS_BASE}/erp-business/sap.s4hana.api_sd_sa_soldtopartydetn/sap-sd-sold-party-determination-connector-overview`,
-  'sap.s4hana.ce_salesorder_0001': `${DOCS_BASE}/erp-business/sap.s4hana.ce_salesorder_0001/sap-sales-order-analytics-connector-overview`,
-  'sap.s4hana.salesarea_0001': `${DOCS_BASE}/erp-business/sap.s4hana.salesarea_0001/sap-sales-area-connector-overview`,
-
-  // Finance & Accounting
-  'paypal.invoices': `${DOCS_BASE}/finance-accounting/paypal.invoices/paypal-invoices-connector-overview`,
-  'paypal.orders': `${DOCS_BASE}/finance-accounting/paypal.orders/paypal-orders-connector-overview`,
-  'paypal.payments': `${DOCS_BASE}/finance-accounting/paypal.payments/paypal-payments-connector-overview`,
-  'paypal.subscriptions': `${DOCS_BASE}/finance-accounting/paypal.subscriptions/paypal-subscriptions-connector-overview`,
-  stripe: `${DOCS_BASE}/finance-accounting/stripe/connector-overview`,
-
-  // HRMS
-  peoplehr: `${DOCS_BASE}/hrms/peoplehr/people-hr-connector-overview`,
-
-  // Marketing & Social Media
-  'hubspot.marketing.campaigns': `${DOCS_BASE}/marketing-social/hubspot.marketing.campaigns/hubspot-marketing-campaigns`,
-  'hubspot.marketing.emails': `${DOCS_BASE}/marketing-social/hubspot.marketing.emails/hubspot-marketing-emails`,
-  'hubspot.marketing.events': `${DOCS_BASE}/marketing-social/hubspot.marketing.events/hubspot-marketing-events-connector-overview`,
-  'hubspot.marketing.forms': `${DOCS_BASE}/marketing-social/hubspot.marketing.forms/hubspot-marketing-forms`,
-  'hubspot.marketing.subscriptions': `${DOCS_BASE}/marketing-social/hubspot.marketing.subscriptions/hubspot-marketing-subscriptions-connector-overview`,
-  'hubspot.marketing.transactional': `${DOCS_BASE}/marketing-social/hubspot.marketing.transactional/hubspot-marketing-transactional-connector-overview`,
-  'mailchimp.marketing': `${DOCS_BASE}/marketing-social/mailchimp.marketing/mailchimp-marketing-connector-overview`,
-  'mailchimp.transactional': `${DOCS_BASE}/marketing-social/mailchimp.transactional/mailchimp-transactional-connector-overview`,
-  'salesforce.marketingcloud': `${DOCS_BASE}/marketing-social/salesforce.marketingcloud/salesforce-marketing-cloud-connector-overview`,
-  twitter: `${DOCS_BASE}/marketing-social/twitter/connector-overview`,
-
-  // Messaging
-  asb: `${DOCS_BASE}/messaging/asb/azure-service-bus-connector-overview`,
-  'aws.sqs': `${DOCS_BASE}/messaging/aws.sqs/aws-sqs-connector-overview`,
-  'confluent.cavroserdes': `${DOCS_BASE}/messaging/confluent.cavroserdes/confluent-avro-serdes-connector-overview`,
-  'confluent.cregistry': `${DOCS_BASE}/messaging/confluent.cregistry/confluent-schema-registry-connector-overview`,
-  'gcloud.pubsub': `${DOCS_BASE}/messaging/gcloud.pubsub/google-cloud-pubsub-connector-overview`,
-  'ibm.ibmmq': `${DOCS_BASE}/messaging/ibm.ibmmq/ibm-mq-connector-overview`,
-  'java.jms': `${DOCS_BASE}/messaging/java.jms/jms-connector-overview`,
-  kafka: `${DOCS_BASE}/messaging/kafka/connector-overview`,
-  nats: `${DOCS_BASE}/messaging/nats/connector-overview`,
-  rabbitmq: `${DOCS_BASE}/messaging/rabbitmq/connector-overview`,
-  solace: `${DOCS_BASE}/messaging/solace/connector-overview`,
-
-  // Productivity & Collaboration
-  asana: `${DOCS_BASE}/productivity-collaboration/asana/connector-overview`,
-  candid: `${DOCS_BASE}/productivity-collaboration/candid/connector-overview`,
-  'docusign.dsadmin': `${DOCS_BASE}/productivity-collaboration/docusign.dsadmin/docusign-admin-connector-overview`,
-  'googleapis.calendar': `${DOCS_BASE}/productivity-collaboration/googleapis.calendar/google-calendar-connector-overview`,
-  'googleapis.gcalendar': `${DOCS_BASE}/productivity-collaboration/googleapis.gcalendar/google-calendar-connector-overview`,
-  'googleapis.sheets': `${DOCS_BASE}/productivity-collaboration/googleapis.sheets/google-sheets-connector-overview`,
-  jira: `${DOCS_BASE}/productivity-collaboration/jira/connector-overview`,
-  smartsheet: `${DOCS_BASE}/productivity-collaboration/smartsheet/connector-overview`,
-  trello: `${DOCS_BASE}/productivity-collaboration/trello/connector-overview`,
-
-  // Security & Identity
-  'aws.secretmanager': `${DOCS_BASE}/security-identity/aws.secretmanager/aws-secrets-manager-connector-overview`,
-  scim: `${DOCS_BASE}/security-identity/scim/connector-overview`,
-
-  // Storage & Files
-  alfresco: `${DOCS_BASE}/storage-file/alfresco/connector-overview`,
-  'aws.s3': `${DOCS_BASE}/storage-file/aws.s3/aws-s3-connector-overview`,
-  azure_storage_service: `${DOCS_BASE}/storage-file/azure_storage_service/overview`,
-  'microsoft.onedrive': `${DOCS_BASE}/storage-file/microsoft.onedrive/microsoft-onedrive-connector-overview`,
-  'microsoft.sharepoint.pages': `${DOCS_BASE}/storage-file/microsoft.sharepoint.pages/connector-overview`,
-};
-
-/**
- * Returns the manually-overridden documentation URL for a connector, or undefined
- * if it isn't in CONNECTOR_DOCS. Use getConnectorDocsUrlMap() for the general case —
- * this is only for the rare exceptions that map covers.
- */
-export function getConnectorDocsUrl(packageName: string): string | undefined {
-  const hardcoded = CONNECTOR_DOCS[packageName];
-  return hardcoded ? (hardcoded.endsWith('/') ? hardcoded : `${hardcoded}/`) : undefined;
-}
-
-/**
  * Full package name to display name overrides.
  * These take highest priority and bypass all other name resolution.
  */
@@ -571,17 +400,51 @@ const DISPLAY_NAME_OVERRIDES: Record<string, string> = {
   'wso2.icp': 'WSO2 ICP',
 };
 
-// Bumped to v3 to invalidate caches populated before the bare package-root URL fix
-// (see pickOverviewUrl) — otherwise users who visited recently would keep the old,
-// incomplete map for up to SITEMAP_CACHE_TTL after this fix ships.
-const SITEMAP_CACHE_KEY = 'connector_docs_sitemap_v3';
+// Bumped to v4 for the new docs site (new sitemap location, changed page slugs): earlier
+// versions invalidated caches populated before the bare package-root URL fix (see
+// pickOverviewUrl). Without a bump, users who visited recently would keep the old map
+// for up to SITEMAP_CACHE_TTL.
+const SITEMAP_CACHE_KEY = 'connector_docs_sitemap_v4';
 const SITEMAP_CACHE_TTL = 6 * 60 * 60 * 1000; // 6 hours
-const DOCS_SITEMAP_URL = `${DOCS_BASE.replace('/connectors/catalog', '')}/sitemap.xml`;
+// The new docs site publishes its sitemap under /connectors; the previous site published
+// one at the docs root. Tried in this order so the store works on either side of the cutover.
+const DOCS_SITEMAP_URLS = [
+  `${DOCS_BASE.replace('/catalog', '')}/sitemap.xml`,
+  `${DOCS_BASE.replace('/connectors/catalog', '')}/sitemap.xml`,
+];
+
+/**
+ * Fetches the first docs sitemap that answers with a success status and lists at least one
+ * connector catalog URL (a 200 page with none, e.g. an HTML fallback, is skipped); throws if
+ * no location qualifies.
+ */
+async function fetchDocsSitemap(): Promise<string> {
+  for (const url of DOCS_SITEMAP_URLS) {
+    try {
+      const response = await fetch(url);
+      if (!response.ok) continue;
+      const xml = await response.text();
+      if (/https:\/\/[^\s<]*\/connectors\/catalog\/[^/<]+\/[^/<\s]+/.test(xml)) return xml;
+    } catch {
+      /* try the next location */
+    }
+  }
+  throw new Error('docs sitemap is unavailable');
+}
 
 interface SitemapCache {
   entries: [string, string][];
   timestamp: number;
 }
+
+const STANDARD_SUBPAGES = new Set([
+  'setup-guide',
+  'example',
+  'actions',
+  'action-reference',
+  'triggers',
+  'trigger-reference',
+]);
 
 /**
  * Picks the canonical "overview" page URL out of every docs URL published for one
@@ -600,7 +463,14 @@ export function pickOverviewUrl(urls: string[], packageName: string): string | u
     /overview/i.test(url.split('/').filter(Boolean).pop() ?? '')
   );
   if (explicitOverview) return explicitOverview;
-  return urls.find((url) => url.split('/').filter(Boolean).pop() === packageName);
+  const byPackageName = urls.find((url) => url.split('/').filter(Boolean).pop() === packageName);
+  if (byPackageName) return byPackageName;
+  // Some connectors (e.g. hubspot.*) name their overview page after the connector. If exactly
+  // one page is left once the standard sub-pages are set aside, that is the overview.
+  const others = urls.filter(
+    (url) => !STANDARD_SUBPAGES.has(url.split('/').filter(Boolean).pop() ?? '')
+  );
+  return others.length === 1 ? others[0] : undefined;
 }
 
 // Module-level promise deduplicates concurrent calls during the same page session
@@ -640,13 +510,13 @@ export function getConnectorDocsUrlMap(): Promise<Map<string, string>> {
 
     // Let network/parse errors propagate so the outer .catch() can reset
     // sitemapPromise and allow a retry on the next call.
-    const response = await fetch(DOCS_SITEMAP_URL);
-    const xml = await response.text();
+    const xml = await fetchDocsSitemap();
 
     const urlsByPackage = new Map<string, string[]>();
-    // The trailing /{slug} is optional so a bare .../catalog/{category}/{packageName}
-    // URL (no slug at all) is captured too — see pickOverviewUrl.
-    const regex = /https:\/\/[^\s<]*\/connectors\/catalog\/[^/<]+\/([^/<]+)(?:\/[^/<\s]+)?/g;
+    // The rest of the path after the package name is optional, so a bare
+    // .../catalog/{category}/{packageName} URL is captured too — see pickOverviewUrl. It may
+    // be more than one segment (e.g. twilio/4.0.x/overview), so the whole path is kept.
+    const regex = /https:\/\/[^\s<]*\/connectors\/catalog\/[^/<]+\/([^/<]+)(?:\/[^<\s]+)?/g;
     let match;
     while ((match = regex.exec(xml)) !== null) {
       const [url, packageName] = match;
