@@ -46,6 +46,7 @@
   "health.fhirr4",
   "health.fhirr5",
   "idetraceprovider",
+  "jaeger",
   "jballerina.java",
   "jballerina.java.arrays",
   "lang.array",
