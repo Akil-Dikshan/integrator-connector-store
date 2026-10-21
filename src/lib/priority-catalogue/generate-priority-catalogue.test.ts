@@ -102,17 +102,18 @@ describe('buildPriorityCatalogue', () => {
     expect(names(page)).toEqual(['high', 'low', 'none', 'immature']);
   });
 
-  it('keeps input order for ties, whatever their pull counts (stable, no re-sort)', () => {
+  it('ranks packages with the same rate by lifetime downloads, then keeps input order (stable)', () => {
     const page = generator.buildPriorityCatalogue({
       packages: [
         raw('ballerinax', 'b', { pullCount: 1 }),
         raw('ballerinax', 'a', { pullCount: 50 }),
         raw('ballerinax', 'c', { pullCount: 7 }),
+        raw('ballerinax', 'd', { pullCount: 7 }),
       ],
       ranking: {},
       hidden: new Set(),
     });
-    expect(names(page)).toEqual(['b', 'a', 'c']);
+    expect(names(page)).toEqual(['a', 'c', 'd', 'b']);
   });
 
   it('spreads the rate order across Areas, one package per Area per round', () => {

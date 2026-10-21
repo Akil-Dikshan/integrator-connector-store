@@ -16,7 +16,12 @@
  under the License.
 */
 
-import { interleaveByArea, AREA_ORDER } from './area-interleave';
+import {
+  interleaveByArea,
+  AREA_ORDER,
+  MIN_RATE_PER_DAY,
+  MIN_LIBRARY_RATE_PER_DAY,
+} from './area-interleave';
 
 type Item = { name: string; keywords: string[] };
 const item = (name: string, ...keywords: string[]): Item => ({ name, keywords });
@@ -129,5 +134,93 @@ describe('interleaveByArea', () => {
     const copy = [...ranked];
     expect(names(interleaveByArea(ranked))).toEqual(names(interleaveByArea(ranked)));
     expect(ranked).toEqual(copy);
+  });
+
+  describe('popularity floor', () => {
+    type Rated = Item & { rate: number | null };
+    const rated = (name: string, rate: number | null, ...keywords: string[]): Rated => ({
+      name,
+      keywords,
+      rate,
+    });
+    const rateOf = (i: Rated) => i.rate;
+
+    it('uses 5 downloads per day as the default floor, and 25 for Libraries', () => {
+      expect(MIN_RATE_PER_DAY).toBe(5);
+      expect(MIN_LIBRARY_RATE_PER_DAY).toBe(25);
+    });
+
+    it('keeps a lightly used Library from leading an Area that has no Connector above the floor', () => {
+      const ranked = [
+        rated('crm1', 100, 'Area/CRM & Sales', 'Type/Connector'),
+        rated('erpLib', 6.6, 'Area/ERP & Business Operations', 'Type/Library'),
+        rated('db1', 50, 'Area/Database', 'Type/Connector'),
+      ];
+      expect(names(interleaveByArea(ranked, { rateOf }))).toEqual(['crm1', 'db1', 'erpLib']);
+    });
+
+    it('still lets a popular Library take its Area turn', () => {
+      const ranked = [
+        rated('crm1', 100, 'Area/CRM & Sales', 'Type/Connector'),
+        rated('netLib', 1000, 'Area/Network & Protocols', 'Type/Library'),
+        rated('db1', 50, 'Area/Database', 'Type/Connector'),
+      ];
+      expect(names(interleaveByArea(ranked, { rateOf }))).toEqual(['crm1', 'netLib', 'db1']);
+    });
+
+    it('keeps a barely used package from taking its Area turn ahead of popular ones', () => {
+      // Input is in rate order. Without the floor erp1 (rate 1) would take round one.
+      const ranked = [
+        rated('crm1', 100, 'Area/CRM & Sales'),
+        rated('db1', 80, 'Area/Database'),
+        rated('db2', 60, 'Area/Database'),
+        rated('erp1', 1, 'Area/ERP & Business Operations'),
+      ];
+      expect(names(interleaveByArea(ranked))).toEqual(['crm1', 'erp1', 'db1', 'db2']);
+      expect(names(interleaveByArea(ranked, { rateOf }))).toEqual(['crm1', 'db1', 'db2', 'erp1']);
+    });
+
+    it('treats a package with no rate as below the floor', () => {
+      const ranked = [
+        rated('db1', 10, 'Area/Database'),
+        rated('crm1', null, 'Area/CRM & Sales'),
+        rated('crm2', 0, 'Area/CRM & Sales'),
+      ];
+      expect(names(interleaveByArea(ranked, { rateOf }))).toEqual(['db1', 'crm1', 'crm2']);
+    });
+
+    it('lets a package exactly at the floor take part', () => {
+      const ranked = [rated('db1', 9, 'Area/Database'), rated('crm1', 5, 'Area/CRM & Sales')];
+      expect(names(interleaveByArea(ranked, { rateOf }))).toEqual(['crm1', 'db1']);
+    });
+
+    it('puts below-floor and Area-less packages after the rounds, in the input (rate) order', () => {
+      const ranked = [
+        rated('lib', 50, 'Type/Library'),
+        rated('low1', 4, 'Area/Healthcare'),
+        rated('db1', 40, 'Area/Database'),
+        rated('low2', 3, 'Area/HRMS'),
+      ];
+      expect(names(interleaveByArea(ranked, { rateOf }))).toEqual(['db1', 'lib', 'low1', 'low2']);
+    });
+
+    it('still puts Connectors before Libraries inside an Area, for packages above the floor', () => {
+      const ranked = [
+        rated('lib', 100, 'Area/Database', 'Type/Library'),
+        rated('conn', 10, 'Area/Database', 'Type/Connector'),
+      ];
+      expect(names(interleaveByArea(ranked, { rateOf }))).toEqual(['conn', 'lib']);
+    });
+
+    it('accepts a custom floor and keeps every package once', () => {
+      const ranked = [
+        rated('a', 30, 'Area/Database'),
+        rated('b', 20, 'Area/CRM & Sales'),
+        rated('c', 8, 'Area/Messaging'),
+      ];
+      const out = names(interleaveByArea(ranked, { rateOf, minRate: 25 }));
+      expect(out).toEqual(['a', 'b', 'c']);
+      expect(new Set(out).size).toBe(ranked.length);
+    });
   });
 });
