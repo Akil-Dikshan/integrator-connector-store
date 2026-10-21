@@ -33,6 +33,7 @@ import {
   PriorityCatalogueCard,
 } from '../priority-catalogue';
 import { interleaveByArea } from '../priority-catalogue/area-interleave';
+import { popularityScore } from '../priority-catalogue/popularity-score';
 
 // Shape of each entry in ranking-data.json (see scripts/generate-ranking-data.js).
 // Precomputed, build-time download-rate ranking -- see that script for the full
@@ -290,20 +291,15 @@ function sortMergedPackages(
         );
       });
     case 'pullCount-desc': {
-      // "Most Popular" now uses precomputed download-rate data (see
-      // scripts/generate-ranking-data.js and RANKING_DATA above), not raw
-      // totalPullCount. The rate spread is extreme (orders of magnitude), so
-      // we log-transform before comparing -- same reasoning as the lifetime-
-      // pullCount skew this replaces. Packages with no entry in RANKING_DATA,
-      // or a null ratePerDay (never reached maturity -- see the script for
-      // the exact rule), sort to the bottom, in no particular order among
-      // themselves (confirmed acceptable).
+      // "Most Popular" blends the precomputed download rate (see
+      // scripts/generate-ranking-data.js and RANKING_DATA above) with the package's
+      // lifetime downloads -- see popularityScore. Packages with no entry in RANKING_DATA,
+      // or a null ratePerDay (never reached maturity -- see the script for the exact rule),
+      // are scored on their lifetime downloads alone, which is small for a new package.
       const getRateScore = (pkg: BallerinaPackage): number => {
         const identity = extractConnectorIdentity(pkg);
-        if (!identity) return 0;
-        const entry = rankingData[`${identity.org}/${identity.packageName}`];
-        if (!entry || entry.ratePerDay === null) return 0;
-        return Math.log10(entry.ratePerDay + 1);
+        const entry = identity ? rankingData[`${identity.org}/${identity.packageName}`] : undefined;
+        return popularityScore(entry?.ratePerDay, pkg.totalPullCount);
       };
 
       if (query) {
@@ -1013,6 +1009,18 @@ export async function getFacetCounts(
   };
 }
 
+/** Downloads per day of a package from the ranking data, for the interleave's popularity floor. */
+function rateFromRanking(
+  ranking: Record<string, RankingEntry>
+): (pkg: BallerinaPackage) => number | null {
+  return (pkg) => {
+    const identity = extractConnectorIdentity(pkg);
+    return identity
+      ? (ranking[`${identity.org}/${identity.packageName}`]?.ratePerDay ?? null)
+      : null;
+  };
+}
+
 /**
  * The default "Most Popular" view: no search and no Area/Vendor/Type filter. Only this
  * view is spread across Areas (see interleaveByArea); filtered views keep the plain rate order.
@@ -1036,7 +1044,9 @@ function searchCatalog(catalog: Catalog, params: SearchParams): SearchResponse {
   const visible = filterByExactKeywords(catalog.packages, params);
   const rankingData = params.sort === 'pullCount-desc' ? catalog.ranking : {};
   const ranked = sortMergedPackages(visible, params.sort, undefined, rankingData);
-  const sorted = isDefaultMostPopular(params) ? interleaveByArea(ranked) : ranked;
+  const sorted = isDefaultMostPopular(params)
+    ? interleaveByArea(ranked, { rateOf: rateFromRanking(rankingData) })
+    : ranked;
   return {
     packages: sorted.slice(params.offset, params.offset + params.limit),
     count: sorted.length,
@@ -1116,7 +1126,9 @@ async function searchCentral(
     // Copy: the cached catalog is shared and must never be sorted/mutated in place.
     const ranked = sortMergedPackages([...filtered], params.sort, params.query, rankingData);
     // Same ordering as the catalogue path (searchCatalog), for the default view.
-    const sorted = isDefaultMostPopular(params) ? interleaveByArea(ranked) : ranked;
+    const sorted = isDefaultMostPopular(params)
+      ? interleaveByArea(ranked, { rateOf: rateFromRanking(rankingData) })
+      : ranked;
     const paged = sorted.slice(params.offset, params.offset + params.limit);
     return {
       packages: paged,

@@ -28,13 +28,21 @@
  *   1. Each item goes to one of the AREA_ORDER Areas: the first of its `Area/*`
  *      keywords that is in the list (so a package tagged Finance and Healthcare lands
  *      in Healthcare).
- *   2. Inside an Area: Connector, then Trigger, then Library, then everything else;
+ *   2. Popularity floor (only when `rateOf` is given): an item whose download rate is
+ *      below `minRate` (MIN_RATE_PER_DAY by default; no rate counts as 0) does not take
+ *      part in the rounds, so a barely used package cannot jump ahead of popular ones
+ *      just because its Area is next in line. Libraries need a higher rate
+ *      (`minLibraryRate`, MIN_LIBRARY_RATE_PER_DAY by default): they rank after
+ *      Connectors in their Area, so one only takes the Area's turn when the Area has no
+ *      Connector or Trigger above the floor, and then it must be clearly popular. Items
+ *      below the floor go to the tail (step 5).
+ *   3. Inside an Area: Connector, then Trigger, then Library, then everything else;
  *      rate order is kept within each type (stable).
- *   3. Rounds: item #1 of every Area, then item #2 of every Area, and so on, with the
+ *   4. Rounds: item #1 of every Area, then item #2 of every Area, and so on, with the
  *      Areas always visited in AREA_ORDER (an Area that runs out is skipped).
- *   4. Everything else -- packages whose only Areas are not in AREA_ORDER (Analytics,
- *      DevOps, stray tags like Finance, ...) and packages with no Area -- goes after
- *      all of that, in download-rate order.
+ *   5. Everything else -- items below the floor, packages whose only Areas are not in
+ *      AREA_ORDER (Analytics, DevOps, stray tags like Finance, ...) and packages with
+ *      no Area -- goes after all of that, in download-rate order.
  */
 
 // Order the Areas are visited in each round (agreed with the team). Names are the
@@ -62,6 +70,13 @@ const AREA_ORDER = [
 const AREA_ALIASES = {
   'Network & Protocols': 'Protocol',
 };
+
+// Minimum downloads per day (the ranking's `ratePerDay`) for a package to take a turn in
+// the Area rounds. Below it, a package is listed by rate after the interleaved part.
+const MIN_RATE_PER_DAY = 5;
+// Same, for Type/Library packages, which would otherwise take an Area's turn whenever the
+// Area has no Connector above the floor (e.g. a 6-per-day library leading ERP).
+const MIN_LIBRARY_RATE_PER_DAY = 25;
 
 const TYPE_ORDER = { Connector: 0, Trigger: 1, Library: 2 };
 const OTHER_TYPE_RANK = 3;
@@ -94,14 +109,25 @@ function typeRankOf(keywords) {
   return rank;
 }
 
-function interleaveByArea(items) {
+/**
+ * @param {Array<{ keywords?: string[] }>} items already in download-rate order
+ * @param {{ rateOf?: (item: any) => number | null | undefined, minRate?: number, minLibraryRate?: number }} [options]
+ *   `rateOf` returns an item's downloads per day; when given, items below `minRate`
+ *   (`minLibraryRate` for Libraries) skip the rounds (see the popularity floor above).
+ *   Without it no floor is applied.
+ */
+function interleaveByArea(items, options = {}) {
+  const { rateOf, minRate = MIN_RATE_PER_DAY, minLibraryRate = MIN_LIBRARY_RATE_PER_DAY } = options;
   const groups = new Map();
-  const rest = [];
+  // Below-floor and Area-less items, with their input position so they keep rate order.
+  const tail = [];
 
   items.forEach((item, index) => {
     const area = areaOf(item.keywords);
-    if (area === null) {
-      rest.push(item);
+    const floor = typeRankOf(item.keywords) === TYPE_ORDER.Library ? minLibraryRate : minRate;
+    const belowFloor = rateOf ? !((rateOf(item) ?? 0) >= floor) : false;
+    if (area === null || belowFloor) {
+      tail.push({ item, index });
       return;
     }
     if (!groups.has(area)) groups.set(area, []);
@@ -123,7 +149,8 @@ function interleaveByArea(items) {
       if (entry) result.push(entry.item);
     }
   }
-  return result.concat(rest);
+  tail.sort((a, b) => a.index - b.index);
+  return result.concat(tail.map((entry) => entry.item));
 }
 
-module.exports = { interleaveByArea, AREA_ORDER };
+module.exports = { interleaveByArea, AREA_ORDER, MIN_RATE_PER_DAY, MIN_LIBRARY_RATE_PER_DAY };

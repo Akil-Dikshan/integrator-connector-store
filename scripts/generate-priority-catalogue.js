@@ -36,6 +36,7 @@ const RANKING_PATH = path.join(PUBLIC_DIR, 'ranking-data.json');
 
 const { fetchAllPackages } = require('./lib/central');
 const { interleaveByArea } = require('../src/lib/priority-catalogue/area-interleave');
+const { popularityScore } = require('../src/lib/priority-catalogue/popularity-score');
 
 // A catalogue smaller than this means Central answered badly; don't publish it.
 const MIN_PACKAGES = 100;
@@ -69,9 +70,7 @@ function connectorKey(pkg) {
 
 // Same score as "Most Popular" in rest-client.ts (sortMergedPackages, pullCount-desc).
 function rateScore(pkg, ranking) {
-  const entry = ranking[connectorKey(pkg)];
-  if (!entry || entry.ratePerDay === null || entry.ratePerDay === undefined) return 0;
-  return Math.log10(entry.ratePerDay + 1);
+  return popularityScore(ranking[connectorKey(pkg)]?.ratePerDay, pkg.pullCount);
 }
 
 function toCard(pkg, ranking) {
@@ -137,7 +136,10 @@ function buildPriorityCatalogue({
     .map((pkg) => ({ pkg, score: rateScore(pkg, ranking) }));
   scored.sort((a, b) => b.score - a.score);
   // Same function the app applies to the default view (searchCatalog in rest-client.ts).
-  const ordered = interleaveByArea(scored.map(({ pkg }) => pkg));
+  const ordered = interleaveByArea(
+    scored.map(({ pkg }) => pkg),
+    { rateOf: (pkg) => ranking[connectorKey(pkg)]?.ratePerDay }
+  );
 
   const page = {
     generatedAt,

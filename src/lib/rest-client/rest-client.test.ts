@@ -73,7 +73,13 @@ Object.defineProperty(global, 'localStorage', {
 
 // Helper to create mock API response
 const createMockApiResponse = (
-  packages: Array<{ name: string; version: string; keywords?: string[]; organization?: string }>,
+  packages: Array<{
+    name: string;
+    version: string;
+    keywords?: string[];
+    organization?: string;
+    pullCount?: number;
+  }>,
   count: number,
   offset: number = 0,
   limit: number = 30
@@ -87,7 +93,7 @@ const createMockApiResponse = (
     keywords: pkg.keywords || ['Area/Integration', 'Vendor/Test', 'Type/Connector'],
     icon: 'https://example.com/icon.png',
     createdDate: '2024-01-15T00:00:00Z',
-    pullCount: 1000,
+    pullCount: pkg.pullCount ?? 1000,
   })),
   count,
   offset,
@@ -1148,7 +1154,7 @@ describe('rest-client', () => {
 
     it('adds packages released since the build after the ranked ones', async () => {
       serve([
-        { name: 'fresh', version: '0.1.0' },
+        { name: 'fresh', version: '0.1.0', pullCount: 0 },
         { name: 'alpha', version: '1.0.0' },
         { name: 'internal-module', version: '1.0.0' },
       ]);
