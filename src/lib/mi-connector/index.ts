@@ -16,29 +16,19 @@
  under the License.
 */
 
+import semver from 'semver';
+import { getMIComponentIds } from './mi-mapping';
+
+export { MI_MAPPING, getMIComponentIds } from './mi-mapping';
+export { MI_ONLY_ORG, MI_ONLY_CONNECTORS, findMIOnlyConnector, miOnlyDetailPath } from './mi-only';
+export type { MIOnlyConnector } from './mi-only';
+export { fetchMILogo, useMILogo } from './mi-logo';
+
 /**
  * MI Integration Store API
  */
 const MI_CONNECTOR_API_BASE =
   'https://apis.wso2.com/qgpf/connector-store-backend/endpoint-9090-803/v1.0';
-
-/**
- * Package names (lowercase) that may fall back to a whole-word match on the MI
- * connector name when neither the exact-name nor the id-suffix lookup finds
- * anything. Empty by default: add a name here only after checking that the
- * connector it resolves to is the right one. Mutable so tests can add entries.
- */
-export const WHOLE_WORD_FALLBACK_ALLOWLIST = new Set<string>();
-
-/**
- * Explicit package-name -> MI connector-name aliases (lowercase keys), checked
- * after the exact/id lookups and before the whole-word fallback. "crypto" is a
- * prefix of "Cryptography", not a whole word, so the whole-word allowlist
- * cannot cover it. Add an entry only after checking the connector is the right one.
- */
-const MI_CONNECTOR_ALIASES: Record<string, string> = {
-  crypto: 'Cryptography',
-};
 
 /**
  * documentationUrl values that are not a connector-specific page: the MI docs
@@ -54,23 +44,6 @@ const IGNORED_DOC_URL_PATTERNS = [
   /^https?:\/\/docs\.wso2\.com\/display\//i,
 ];
 
-interface MIConnector {
-  id: string;
-  name: string;
-}
-
-interface MIConnectorDetails {
-  id: string;
-  name: string;
-  documentationUrl?: string;
-}
-
-/** True if `word` appears in `text` as a whole word (not inside a longer word). */
-function containsWholeWord(text: string, word: string): boolean {
-  const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`(^|[^a-z0-9])${escaped}($|[^a-z0-9])`, 'i').test(text);
-}
-
 /** True if the URL is the MI docs home (any version); query, hash and trailing slashes are ignored. */
 function isMiDocsHome(url: string): boolean {
   try {
@@ -84,79 +57,194 @@ function isMiDocsHome(url: string): boolean {
   }
 }
 
-/** Returns the URL, or undefined if it is the MI docs home or an identity-outbound-auth repo. */
-function usableDocumentationUrl(url: string | undefined): string | undefined {
+/** Returns the URL, or undefined if it is the MI docs home, an identity-outbound-auth repo or a retired docs page. */
+export function usableDocumentationUrl(url: string | undefined): string | undefined {
   if (!url) return url;
   if (isMiDocsHome(url)) return undefined;
   if (IGNORED_DOC_URL_PATTERNS.some((pattern) => pattern.test(url))) return undefined;
   return url;
 }
 
+export interface MIAsset {
+  name: string;
+  downloadUrl: string;
+}
+
+export interface MIRelease {
+  tagName: string;
+  releaseUrl?: string;
+  /** Supported MI versions, e.g. "MI 4.7.0" */
+  products: string[];
+  assets: MIAsset[];
+}
+
+export interface MIComponent {
+  id: string;
+  name: string;
+  description?: string;
+  license?: string;
+  licenseUrl?: string;
+  labels: string[];
+  repoUrl?: string;
+  documentationUrl?: string;
+  /** Newest first */
+  releases: MIRelease[];
+}
+
+interface MIConnectorDetailsResponse {
+  repoName?: string;
+  repoUrl?: string;
+  connectorName?: string;
+  description?: string;
+  documentationUrl?: string;
+  license?: string;
+  licenseUrl?: string;
+  labels?: string[];
+}
+
+interface MIReleaseResponse {
+  tagName?: string;
+  name?: string;
+  releaseUrl?: string;
+  products?: string[];
+  assets?: { name?: string; downloadUrl?: string }[];
+}
+
+/** Compare release tags such as "v3.3.11" newest first. Unparseable tags sort last. */
+export function compareReleasesDesc(a: { tagName: string }, b: { tagName: string }): number {
+  const va = semver.coerce(a.tagName);
+  const vb = semver.coerce(b.tagName);
+  if (va && vb) return semver.rcompare(va, vb);
+  if (va) return -1;
+  if (vb) return 1;
+  return b.tagName.localeCompare(a.tagName);
+}
+
+/** Parse "MI 4.7.0" into a semver version, or null when it cannot be read. */
+function parseMIVersion(product: string): semver.SemVer | null {
+  return semver.coerce(product);
+}
+
+/** Supported MI versions, newest first, de-duplicated. Entries without a version are dropped. */
+export function sortMIVersions(products: readonly string[]): string[] {
+  const unique = Array.from(new Set(products.map((p) => p.trim()).filter(Boolean)));
+  return unique
+    .map((p) => ({ label: p, version: parseMIVersion(p) }))
+    .filter((p): p is { label: string; version: semver.SemVer } => p.version !== null)
+    .sort((a, b) => semver.rcompare(a.version, b.version))
+    .map((p) => p.label);
+}
+
+/** True when the versions share a major and cover every minor between the lowest and highest. */
+function isContiguousRange(versions: semver.SemVer[]): boolean {
+  if (versions.length < 3) return false;
+  const major = versions[0].major;
+  if (versions.some((v) => v.major !== major || v.patch !== 0)) return false;
+  const minors = versions.map((v) => v.minor);
+  return Math.max(...minors) - Math.min(...minors) + 1 === versions.length;
+}
+
 /**
- * Search for a matching MI connector by name
- * @param connectorName - The connector name to search for (e.g., "snowflake")
- * @returns The matching MI connector details with documentation URL, or null if not found
+ * Compact label for a release's supported MI versions: "MI 4.7.0 … MI 4.0.0" when the
+ * versions form an unbroken range, otherwise the full comma separated list.
  */
-export async function fetchMIConnector(connectorName: string): Promise<MIConnectorDetails | null> {
-  try {
-    // Step 1: Fetch all connector names
-    const namesResponse = await fetch(`${MI_CONNECTOR_API_BASE}/connectors/names`);
-    if (!namesResponse.ok) {
-      console.warn('Failed to fetch MI connector names:', namesResponse.status);
-      return null;
-    }
+export function formatMIVersionRange(products: readonly string[]): string {
+  const sorted = sortMIVersions(products);
+  if (sorted.length === 0) return '';
+  const parsed = sorted.map((p) => parseMIVersion(p) as semver.SemVer);
+  if (isContiguousRange(parsed)) {
+    return `${sorted[0]} … ${sorted[sorted.length - 1]}`;
+  }
+  return sorted.join(', ');
+}
 
-    const connectors: MIConnector[] = await namesResponse.json();
+/** Download label from the file extension, e.g. "zip" or "jar". */
+export function getAssetLabel(assetName: string): string {
+  const match = assetName.match(/\.([a-z0-9]+)$/i);
+  return match ? match[1].toLowerCase() : 'file';
+}
 
-    // Step 2: Search for matching connector with two-step lookup
-    // First try exact match (trimmed, case-insensitive)
-    const trimmedSearchName = connectorName.trim().toLowerCase();
+/** The component with this id, or the first component when the id is missing or unknown. */
+export function selectMIComponent(
+  components: readonly MIComponent[],
+  componentId: string | null | undefined
+): MIComponent | undefined {
+  return components.find((c) => c.id === componentId) ?? components[0];
+}
 
-    // Return early if search name is empty
-    if (!trimmedSearchName) {
-      return null;
-    }
-
-    let matchingConnector = connectors.find(
-      (c) => c.name.trim().toLowerCase() === trimmedSearchName
-    );
-
-    // Fall back to id suffix match if exact name match fails
-    if (!matchingConnector) {
-      matchingConnector = connectors.find((c) =>
-        c.id.toLowerCase().endsWith(`-${trimmedSearchName}`)
-      );
-    }
-
-    // Explicit alias (e.g. crypto -> Cryptography)
-    const aliasName = MI_CONNECTOR_ALIASES[trimmedSearchName]?.toLowerCase();
-    if (!matchingConnector && aliasName) {
-      matchingConnector = connectors.find((c) => c.name.trim().toLowerCase() === aliasName);
-    }
-
-    // Last resort: whole-word name match, only for explicitly allowlisted names.
-    // (A plain substring match linked e.g. "io" to "Challenge Questions Connector".)
-    if (!matchingConnector && WHOLE_WORD_FALLBACK_ALLOWLIST.has(trimmedSearchName)) {
-      matchingConnector = connectors.find((c) => containsWholeWord(c.name, trimmedSearchName));
-    }
-
-    if (!matchingConnector) {
-      return null;
-    }
-
-    // Step 3: Fetch full connector details to get documentation URL
-    const detailsResponse = await fetch(
-      `${MI_CONNECTOR_API_BASE}/connectors/${encodeURIComponent(matchingConnector.id)}`
-    );
-    if (!detailsResponse.ok) {
-      console.warn('Failed to fetch MI connector details:', detailsResponse.status);
-      return null;
-    }
-
-    const details: MIConnectorDetails = await detailsResponse.json();
-    return { ...details, documentationUrl: usableDocumentationUrl(details.documentationUrl) };
-  } catch (error) {
-    console.error('Error fetching MI connector:', error);
+async function fetchJson<T>(url: string): Promise<T | null> {
+  const response = await fetch(url);
+  if (!response.ok) {
+    console.warn('MI connector request failed:', response.status, url);
     return null;
   }
+  return (await response.json()) as T;
+}
+
+async function loadMIComponent(id: string): Promise<MIComponent | null> {
+  const encodedId = encodeURIComponent(id);
+  const [details, releases] = await Promise.all([
+    fetchJson<MIConnectorDetailsResponse>(`${MI_CONNECTOR_API_BASE}/connectors/${encodedId}`),
+    fetchJson<MIReleaseResponse[]>(`${MI_CONNECTOR_API_BASE}/connectors/${encodedId}/releases`),
+  ]);
+  if (!details) return null;
+
+  const mappedReleases: MIRelease[] = (Array.isArray(releases) ? releases : [])
+    .filter((r): r is MIReleaseResponse & { tagName: string } => Boolean(r.tagName))
+    .map((r) => ({
+      tagName: r.tagName,
+      releaseUrl: r.releaseUrl,
+      products: r.products ?? [],
+      assets: (r.assets ?? [])
+        .filter((a): a is { name: string; downloadUrl: string } => Boolean(a.name && a.downloadUrl))
+        .map((a) => ({ name: a.name, downloadUrl: a.downloadUrl })),
+    }))
+    .sort(compareReleasesDesc);
+
+  return {
+    id,
+    name: details.connectorName || id,
+    description: details.description,
+    license: details.license,
+    licenseUrl: details.licenseUrl,
+    labels: details.labels ?? [],
+    repoUrl: details.repoUrl,
+    documentationUrl: usableDocumentationUrl(details.documentationUrl) || undefined,
+    releases: mappedReleases,
+  };
+}
+
+const componentCache = new Map<string, Promise<MIComponent | null>>();
+
+function loadMIComponentCached(id: string): Promise<MIComponent | null> {
+  let pending = componentCache.get(id);
+  if (!pending) {
+    pending = loadMIComponent(id).catch((error) => {
+      console.error('Error fetching MI component:', id, error);
+      return null;
+    });
+    componentCache.set(id, pending);
+    // Do not keep failures, so the next visit retries.
+    pending.then((result) => {
+      if (result === null) componentCache.delete(id);
+    });
+  }
+  return pending;
+}
+
+/**
+ * MI components with these ids, in the same order. Components that fail to load are skipped.
+ */
+export async function fetchMIComponentsByIds(ids: readonly string[]): Promise<MIComponent[]> {
+  const components = await Promise.all(ids.map(loadMIComponentCached));
+  return components.filter((c): c is MIComponent => c !== null);
+}
+
+/**
+ * MI components for a Ballerina package, in the order of the curated mapping.
+ * Returns an empty array when the package has no MI counterpart.
+ */
+export async function fetchMIComponents(org: string, name: string): Promise<MIComponent[]> {
+  const ids = getMIComponentIds(org, name);
+  return ids.length === 0 ? [] : fetchMIComponentsByIds(ids);
 }
