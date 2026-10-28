@@ -67,15 +67,13 @@ export default function MIOnlyDetailPage() {
     return mode as 'light' | 'dark';
   }, [mode]);
 
-  useNoIndexMeta(!connector, 'Connector not found - WSO2 Integration Platform Connectors');
-
-  useEffect(() => {
-    if (!connector) return;
-    document.title = `${connector.name} - WSO2 Integration Platform Connectors`;
-    return () => {
-      document.title = 'WSO2 Integration Platform Connectors and Pre-built Integrations';
-    };
-  }, [connector]);
+  // These pages are not in the sitemap and only have the MI description, so they are not indexed.
+  useNoIndexMeta(
+    true,
+    connector
+      ? `${connector.name} - WSO2 Integration Platform Connectors`
+      : 'Connector not found - WSO2 Integration Platform Connectors'
+  );
 
   useEffect(() => {
     if (!connector) return;

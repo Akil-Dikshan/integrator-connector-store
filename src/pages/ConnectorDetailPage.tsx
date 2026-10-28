@@ -45,6 +45,7 @@ import { isNotFoundError } from '@/lib/rest-client/errors';
 import { useNoIndexMeta } from '@/lib/seo/useNoIndexMeta';
 import {
   MIComponent,
+  didMILoadFail,
   fetchMIComponents,
   getMIComponentIds,
   selectMIComponent,
@@ -137,6 +138,7 @@ export default function ConnectorDetailPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [miComponents, setMiComponents] = useState<MIComponent[]>([]);
   const [miLoading, setMiLoading] = useState(false);
+  const [miLoadFailed, setMiLoadFailed] = useState(false);
   // null = sitemap check in progress, string = confirmed URL, undefined = no docs
   const [docsUrl, setDocsUrl] = useState<string | null | undefined>(null);
 
@@ -207,6 +209,7 @@ export default function ConnectorDetailPage() {
   // https://github.com/wso2/product-integrator/issues/2553.
   useEffect(() => {
     setMiComponents([]);
+    setMiLoadFailed(false);
     if (!org || !name || !hasMIMapping) {
       setMiLoading(false);
       return;
@@ -217,6 +220,7 @@ export default function ConnectorDetailPage() {
     fetchMIComponents(org, name).then((components) => {
       if (cancelled) return;
       setMiComponents(components);
+      setMiLoadFailed(components.length === 0 && didMILoadFail(getMIComponentIds(org, name)));
       setMiLoading(false);
     });
 
@@ -232,7 +236,11 @@ export default function ConnectorDetailPage() {
   const profile: ConnectorProfile = miAvailable && requestedMI ? 'mi' : 'default';
   const switchDisabledReasons = miAvailable
     ? undefined
-    : { mi: 'Not available: no MI connector for this connector' };
+    : {
+        mi: miLoadFailed
+          ? 'Could not load the MI details. Try again later.'
+          : 'Not available: no MI connector for this connector',
+      };
   const selectedMIComponent = selectMIComponent(miComponents, searchParams.get('component'));
 
   const updateProfileParams = (nextProfile: ConnectorProfile, componentId?: string) => {

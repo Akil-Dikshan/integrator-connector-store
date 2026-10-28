@@ -20,11 +20,15 @@ import { MI_ONLY_CONNECTORS, findMIOnlyConnector, miOnlyDetailPath } from './mi-
 import { MI_MAPPING } from './mi-mapping';
 
 describe('MI-only connectors', () => {
-  it('covers the 12 MI artifacts without a Ballerina connector, as 10 connectors', () => {
+  it('covers the 11 MI artifacts without a Ballerina connector, as 9 connectors', () => {
     const components = MI_ONLY_CONNECTORS.flatMap((c) => c.componentIds);
-    expect(components).toHaveLength(12);
-    expect(new Set(components).size).toBe(12);
-    expect(MI_ONLY_CONNECTORS).toHaveLength(10);
+    expect(components).toHaveLength(11);
+    expect(new Set(components).size).toBe(11);
+    expect(MI_ONLY_CONNECTORS).toHaveLength(9);
+  });
+
+  it('leaves out the SalesforceLeadsToSpreadsheet sample integration', () => {
+    expect(findMIOnlyConnector('esb-connector-integrationbase')).toBeUndefined();
   });
 
   it('never repeats a component that a Ballerina connector already has', () => {

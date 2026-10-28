@@ -16,7 +16,7 @@
  under the License.
 */
 
-import { searchPackages } from '@/lib/rest-client';
+import { getCatalogMatches, searchPackages } from '@/lib/rest-client';
 import type { BallerinaPackage } from '@/types/connector';
 import {
   activeProfile,
@@ -28,9 +28,10 @@ import {
 } from './profile-search';
 import type { ListedConnector } from './profile-search';
 
-jest.mock('@/lib/rest-client', () => ({ searchPackages: jest.fn() }));
+jest.mock('@/lib/rest-client', () => ({ searchPackages: jest.fn(), getCatalogMatches: jest.fn() }));
 
 const mockSearch = searchPackages as jest.Mock;
+const mockMatches = getCatalogMatches as jest.Mock;
 
 const pkg = (
   org: string,
@@ -65,7 +66,6 @@ const MI_ONLY_NAMES = [
   'Intelligent Document Processing',
   'ISO8583',
   'Pulsar',
-  'SalesforceLeadsToSpreadsheet',
   'Utility',
 ];
 
@@ -163,7 +163,7 @@ describe('searchWithProfile', () => {
     ]);
 
     const page3 = await searchWithProfile({ ...base, offset: 12, limit: 6 }, null);
-    expect(names(page3.packages)).toEqual(['SalesforceLeadsToSpreadsheet', 'Utility']);
+    expect(names(page3.packages)).toEqual(['Utility']);
   });
 
   it('lists MI-only connectors after the Ballerina ones for the other non-name sorts too', async () => {
@@ -249,6 +249,10 @@ describe('searchWithProfile', () => {
 });
 
 describe('getProfileCounts', () => {
+  beforeEach(() => {
+    mockMatches.mockResolvedValue(BALLERINA);
+  });
+
   it('counts each profile with the current search and filters', async () => {
     expect(await getProfileCounts({})).toEqual({
       default: 4,
@@ -262,5 +266,16 @@ describe('getProfileCounts', () => {
 
   it('counts only the matching MI-only connectors for a search', async () => {
     expect(await getProfileCounts({ query: 'pulsar' })).toEqual({ default: 4, mi: 2 + 1 });
+  });
+
+  it('counts from the in-memory catalogue, without a search request', async () => {
+    await getProfileCounts({ query: 'kafka', areas: ['Messaging'] });
+    expect(mockMatches).toHaveBeenCalledWith({ query: 'kafka', areas: ['Messaging'] });
+    expect(mockSearch).not.toHaveBeenCalled();
+  });
+
+  it('gives no counts while there is no catalogue', async () => {
+    mockMatches.mockResolvedValue(null);
+    expect(await getProfileCounts({})).toBeNull();
   });
 });

@@ -28,8 +28,8 @@
  * A component can be shared by several packages (the three SharePoint packages share one).
  * MI components without a connector in the default profile are left out for now: AS400 PCML,
  * CDC (Inbound), Creatio, Google Ads, Google Firebase, ISO8583 and its inbound, Intelligent
- * Document Processing, Pulsar and its inbound, Utility, and the SalesforceLeadsToSpreadsheet
- * sample.
+ * Document Processing, Pulsar and its inbound, and Utility. The SalesforceLeadsToSpreadsheet
+ * sample integration is not a connector and is left out entirely.
  */
 export const MI_MAPPING: Readonly<Record<string, readonly string[]>> = {
   'ballerina/ai': ['mi-module-generative-ai'],

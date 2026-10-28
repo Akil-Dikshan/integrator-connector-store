@@ -19,6 +19,7 @@
 import {
   MI_MAPPING,
   compareReleasesDesc,
+  didMILoadFail,
   fetchMIComponents,
   formatMIVersionRange,
   getAssetLabel,
@@ -54,6 +55,13 @@ describe('sortMIVersions', () => {
       'MI 4.10.0',
       'MI 4.7.0',
       'MI 4.0.0',
+    ]);
+  });
+
+  it('ignores products that are not MI, such as old ESB releases', () => {
+    expect(sortMIVersions(['ESB 5.0.0', '"ESB 5.0.0"', 'MI 4.7.0', 'mi 4.6.0'])).toEqual([
+      'MI 4.7.0',
+      'mi 4.6.0',
     ]);
   });
 });
@@ -200,7 +208,7 @@ describe('fetchMIComponents', () => {
       status: 200,
       json: async () =>
         url.endsWith('/releases')
-          ? []
+          ? [{ tagName: 'v1.0.0', products: ['MI 4.7.0'] }]
           : { connectorName: 'Stripe', documentationUrl: 'https://mi.docs.wso2.com/en/latest/' },
     })) as unknown as typeof fetch;
 
@@ -210,16 +218,71 @@ describe('fetchMIComponents', () => {
   });
 
   it('skips a component whose details fail to load', async () => {
-    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const error = jest.spyOn(console, 'error').mockImplementation(() => {});
     global.fetch = jest.fn(async (url: string) => ({
       ok: !url.includes('esb-inbound-twitter'),
       status: url.includes('esb-inbound-twitter') ? 500 : 200,
-      json: async () => (url.endsWith('/releases') ? [] : { connectorName: 'Twitter' }),
+      json: async () =>
+        url.endsWith('/releases')
+          ? [{ tagName: 'v1.0.0', products: ['MI 4.7.0'] }]
+          : { connectorName: 'Twitter' },
     })) as unknown as typeof fetch;
 
     const result = await fetchMIComponents('ballerinax', 'twitter');
     expect(result.map((c) => c.id)).toEqual(['esb-connector-twitter']);
-    warn.mockRestore();
+    expect(didMILoadFail(['esb-inbound-twitter'])).toBe(true);
+    expect(didMILoadFail(['esb-connector-twitter'])).toBe(false);
+    error.mockRestore();
+  });
+
+  it('treats a connector whose only release is for an old ESB product as having no MI profile', async () => {
+    global.fetch = jest.fn(async (url: string) => ({
+      ok: true,
+      status: 200,
+      json: async () =>
+        url.endsWith('/releases')
+          ? [{ tagName: 'v2.0.0', products: ['"ESB 5.0.0"'] }]
+          : { connectorName: 'Snowflake' },
+    })) as unknown as typeof fetch;
+
+    await expect(fetchMIComponents('ballerinax', 'snowflake')).resolves.toEqual([]);
+    expect(didMILoadFail(['esb-connector-snowflake'])).toBe(false);
+  });
+
+  it('drops releases without an MI version and keeps the others', async () => {
+    global.fetch = jest.fn(async (url: string) => ({
+      ok: true,
+      status: 200,
+      json: async () =>
+        url.endsWith('/releases')
+          ? [
+              { tagName: 'v2.0.0', products: ['ESB 5.0.0'] },
+              { tagName: 'v1.0.0', products: ['MI 4.7.0'] },
+            ]
+          : { connectorName: 'Solace' },
+    })) as unknown as typeof fetch;
+
+    const result = await fetchMIComponents('ballerinax', 'solace');
+    expect(result[0].releases.map((r) => r.tagName)).toEqual(['v1.0.0']);
+  });
+
+  it('gives up after 10 seconds and reports the load as failed', async () => {
+    jest.useFakeTimers();
+    const error = jest.spyOn(console, 'error').mockImplementation(() => {});
+    global.fetch = jest.fn(
+      (_url: string, init?: RequestInit) =>
+        new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(new Error('aborted')));
+        })
+    ) as unknown as typeof fetch;
+
+    const pending = fetchMIComponents('ballerinax', 'servicenow');
+    jest.advanceTimersByTime(10_000);
+    await expect(pending).resolves.toEqual([]);
+    expect(didMILoadFail(['esb-connector-servicenow'])).toBe(true);
+
+    error.mockRestore();
+    jest.useRealTimers();
   });
 });
 

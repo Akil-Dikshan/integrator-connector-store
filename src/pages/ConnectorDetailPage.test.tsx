@@ -24,7 +24,7 @@ import { OxygenUIThemeProvider } from '@wso2/oxygen-ui';
 import { lightTheme } from '@/styles/theme';
 import ConnectorDetailPage from './ConnectorDetailPage';
 import { fetchPackageDetails } from '@/lib/rest-client';
-import { fetchMIComponents, MIComponent } from '@/lib/mi-connector';
+import { didMILoadFail, fetchMIComponents, MIComponent } from '@/lib/mi-connector';
 import { HIDDEN_PACKAGES } from '@/lib/connector-utils';
 import { PackageNotFoundError } from '@/lib/rest-client/errors';
 
@@ -34,6 +34,7 @@ jest.mock('@/lib/rest-client', () => ({
 jest.mock('@/lib/mi-connector', () => ({
   ...jest.requireActual('@/lib/mi-connector'),
   fetchMIComponents: jest.fn(),
+  didMILoadFail: jest.fn(),
 }));
 jest.mock('@/components/WSO2Header', () => () => null);
 jest.mock('@/components/Footer', () => () => null);
@@ -47,6 +48,7 @@ jest.mock(
 
 const mockFetchPackageDetails = fetchPackageDetails as jest.Mock;
 const mockFetchMIComponents = fetchMIComponents as jest.Mock;
+const mockDidMILoadFail = didMILoadFail as jest.Mock;
 
 const renderAt = (path: string) => {
   const router = createMemoryRouter(
@@ -313,5 +315,22 @@ describe('ConnectorDetailPage MI profile', () => {
     expect(
       await screen.findByText('Not available: no MI connector for this connector')
     ).toBeInTheDocument();
+  });
+
+  it('explains a failed MI load instead of saying there is no MI connector', async () => {
+    mockFetchMIComponents.mockResolvedValue([]);
+    mockDidMILoadFail.mockReturnValue(true);
+    open('/connector/ballerinax/kafka/latest?profile=mi');
+
+    await screen.findByText('Downloads');
+    const mi = screen.getByRole('button', { name: 'WSO2 Integrator: MI' });
+    await waitFor(() => expect(mi).toBeDisabled());
+    await userEvent.hover(mi.parentElement as HTMLElement);
+    expect(
+      await screen.findByText('Could not load the MI details. Try again later.')
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText('Not available: no MI connector for this connector')
+    ).not.toBeInTheDocument();
   });
 });

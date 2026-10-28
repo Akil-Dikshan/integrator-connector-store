@@ -125,9 +125,19 @@ function parseMIVersion(product: string): semver.SemVer | null {
   return semver.coerce(product);
 }
 
-/** Supported MI versions, newest first, de-duplicated. Entries without a version are dropped. */
+/**
+ * Supported MI versions, newest first, de-duplicated. Only products named "MI ..." count (releases
+ * of older ESB products list e.g. "ESB 5.0.0"); entries without a version are dropped.
+ */
 export function sortMIVersions(products: readonly string[]): string[] {
-  const unique = Array.from(new Set(products.map((p) => p.trim()).filter(Boolean)));
+  const unique = Array.from(
+    new Set(
+      products
+        .map((p) => p.trim())
+        .filter(Boolean)
+        .filter((p) => /^MI\s/i.test(p))
+    )
+  );
   return unique
     .map((p) => ({ label: p, version: parseMIVersion(p) }))
     .filter((p): p is { label: string; version: semver.SemVer } => p.version !== null)
@@ -172,13 +182,22 @@ export function selectMIComponent(
   return components.find((c) => c.id === componentId) ?? components[0];
 }
 
-async function fetchJson<T>(url: string): Promise<T | null> {
-  const response = await fetch(url);
-  if (!response.ok) {
-    console.warn('MI connector request failed:', response.status, url);
-    return null;
+/** A request that takes longer than this counts as failed, so loading states always end. */
+const MI_REQUEST_TIMEOUT_MS = 10_000;
+
+/** Throws when the request fails, times out or returns an error status. */
+async function fetchJson<T>(url: string): Promise<T> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), MI_REQUEST_TIMEOUT_MS);
+  try {
+    const response = await fetch(url, { signal: controller.signal });
+    if (!response.ok) {
+      throw new Error(`MI connector request failed: ${response.status} ${url}`);
+    }
+    return (await response.json()) as T;
+  } finally {
+    clearTimeout(timer);
   }
-  return (await response.json()) as T;
 }
 
 async function loadMIComponent(id: string): Promise<MIComponent | null> {
@@ -187,10 +206,11 @@ async function loadMIComponent(id: string): Promise<MIComponent | null> {
     fetchJson<MIConnectorDetailsResponse>(`${MI_CONNECTOR_API_BASE}/connectors/${encodedId}`),
     fetchJson<MIReleaseResponse[]>(`${MI_CONNECTOR_API_BASE}/connectors/${encodedId}/releases`),
   ]);
-  if (!details) return null;
 
+  // Only releases that support an MI version count; without one the component is not an MI profile.
   const mappedReleases: MIRelease[] = (Array.isArray(releases) ? releases : [])
     .filter((r): r is MIReleaseResponse & { tagName: string } => Boolean(r.tagName))
+    .filter((r) => sortMIVersions(r.products ?? []).length > 0)
     .map((r) => ({
       tagName: r.tagName,
       releaseUrl: r.releaseUrl,
@@ -200,6 +220,7 @@ async function loadMIComponent(id: string): Promise<MIComponent | null> {
         .map((a) => ({ name: a.name, downloadUrl: a.downloadUrl })),
     }))
     .sort(compareReleasesDesc);
+  if (mappedReleases.length === 0) return null;
 
   return {
     id,
@@ -215,14 +236,27 @@ async function loadMIComponent(id: string): Promise<MIComponent | null> {
 }
 
 const componentCache = new Map<string, Promise<MIComponent | null>>();
+/** Ids whose last load failed (request error or timeout), as opposed to having no MI release. */
+const failedLoads = new Set<string>();
+
+/** True when the last load of any of these components failed instead of finding no MI release. */
+export function didMILoadFail(ids: readonly string[]): boolean {
+  return ids.some((id) => failedLoads.has(id));
+}
 
 function loadMIComponentCached(id: string): Promise<MIComponent | null> {
   let pending = componentCache.get(id);
   if (!pending) {
-    pending = loadMIComponent(id).catch((error) => {
-      console.error('Error fetching MI component:', id, error);
-      return null;
-    });
+    pending = loadMIComponent(id)
+      .then((component) => {
+        failedLoads.delete(id);
+        return component;
+      })
+      .catch((error) => {
+        console.error('Error fetching MI component:', id, error);
+        failedLoads.add(id);
+        return null;
+      });
     componentCache.set(id, pending);
     // Do not keep failures, so the next visit retries.
     pending.then((result) => {

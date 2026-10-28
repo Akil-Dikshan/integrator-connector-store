@@ -102,6 +102,14 @@ beforeEach(() => {
 });
 
 describe('MIOnlyDetailPage', () => {
+  it('marks a valid page noindex, with the connector title', async () => {
+    open('/connector/wso2-mi/mi-connector-pulsar');
+    await screen.findByText('Supported MI versions');
+
+    expect(document.querySelector('meta[name="robots"]')?.getAttribute('content')).toBe('noindex');
+    expect(document.title).toBe('Pulsar - WSO2 Integration Platform Connectors');
+  });
+
   it('shows the connector with an MI badge, the MI description and the MI panel', async () => {
     open('/connector/wso2-mi/mi-connector-pulsar');
 

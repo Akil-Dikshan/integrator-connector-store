@@ -17,7 +17,7 @@
 */
 
 import type { BallerinaPackage } from '@/types/connector';
-import { searchPackages } from '@/lib/rest-client';
+import { getCatalogMatches, searchPackages } from '@/lib/rest-client';
 import type { SearchParams, SearchResponse } from '@/lib/rest-client';
 import { getDisplayName, parseConnectorMetadata } from '@/lib/connector-utils';
 import { getMIComponentIds } from './mi-mapping';
@@ -178,12 +178,16 @@ export interface ProfileCounts {
   mi: number;
 }
 
-/** How many connectors each Profile option would show with the current search and filters. */
+/**
+ * How many connectors each Profile option would show with the current search and filters.
+ * Counted over the in-memory catalogue, so it makes no Central request; resolves null while
+ * there is no catalogue, and the counts are then left out.
+ */
 export async function getProfileCounts(
   params: Pick<SearchParams, 'query' | 'areas' | 'vendors' | 'types' | 'orgName'>
-): Promise<ProfileCounts> {
-  const all = await searchPackages({ ...params, offset: 0, limit: ALL, sort: 'name-asc' });
-  const withMI = all.packages.filter(hasMIProfile).length;
+): Promise<ProfileCounts | null> {
+  const matches = await getCatalogMatches(params);
+  if (!matches) return null;
   const miOnly = hasKeywordFilters(params) ? 0 : matchMIOnly(params.query).length;
-  return { default: all.count, mi: withMI + miOnly };
+  return { default: matches.length, mi: matches.filter(hasMIProfile).length + miOnly };
 }

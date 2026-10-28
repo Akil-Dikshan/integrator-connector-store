@@ -89,12 +89,6 @@ export const MI_ONLY_CONNECTORS: readonly MIOnlyConnector[] = [
     componentIds: ['mi-connector-pulsar', 'mi-inbound-pulsar'],
   },
   {
-    id: 'esb-connector-integrationbase',
-    name: 'SalesforceLeadsToSpreadsheet',
-    summary: 'Share new Salesforce leads with stakeholders through Gmail and Google Sheets.',
-    componentIds: ['esb-connector-integrationbase'],
-  },
-  {
     id: 'mediation-utility-module',
     name: 'Utility',
     summary: 'String, date, math and signature utility functions for mediation flows.',
