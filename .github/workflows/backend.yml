@@ -1,0 +1,28 @@
+name: Backend
+
+on:
+  push:
+    branches: [main, develop]
+    paths: ['backend/**', '.github/workflows/backend.yml']
+  pull_request:
+    branches: [main, develop]
+    paths: ['backend/**', '.github/workflows/backend.yml']
+
+jobs:
+  build-and-test:
+    name: Build and test (${{ matrix.package }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [service, scheduler]
+    defaults:
+      run:
+        working-directory: backend/${{ matrix.package }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ballerina-platform/setup-ballerina@v1
+        with:
+          version: 2201.14.1
+      - run: bal build
+      - run: bal test

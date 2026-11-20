@@ -1,0 +1,8 @@
+{
+  "_note": "Synthetic sample, not captured from Central. Field names beyond organization, name and pullCount are unverified.",
+  "packages": [
+    { "organization": "ballerinax", "name": "github", "version": "5.0.0", "summary": "GitHub connector", "keywords": ["Area/Developer Tools", "Vendor/GitHub"], "pullCount": 5000, "deprecated": false },
+    { "organization": "ballerinax", "name": "salesforce", "version": "8.0.0", "summary": "Salesforce connector", "keywords": ["Area/CRM", "Vendor/Salesforce"], "pullCount": 9000, "deprecated": false },
+    { "organization": "ballerinax", "name": "slack", "version": "4.0.0", "summary": "Slack connector", "keywords": ["Area/Communication", "Vendor/Slack"], "pullCount": 5000, "deprecated": false }
+  ]
+}

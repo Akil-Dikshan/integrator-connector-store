@@ -1,0 +1,135 @@
+# Copyright (c) 2026 WSO2 LLC. (http://www.wso2.com) All Rights Reserved.
+#
+# WSO2 LLC. licenses this file to you under the Apache License,
+# Version 2.0 (the "License"); you may not use this file except
+# in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+enum Profile { INTEGRATOR MI }
+enum ConnectorSort { RELEVANCE POPULARITY NAME UPDATED }
+enum TriggerType { HTTP GRAPHQL TCP FILE EVENT AGENT MCP }
+
+type Connector {
+  id: ID!
+  org: String!
+  name: String!
+  displayName: String!
+  latestVersion: String
+  versions: [String!]!
+  description: String!
+  icon: String
+  license: String
+  sourceRepo: String
+  repoUrl: String
+  docsUrl: String
+  totalPullCount: Int
+  areas: [String!]!
+  vendor: String
+  profiles: [Profile!]!
+  miComponents: [MIComponent!]!
+  isDeprecated: Boolean!
+  updatedAt: String!
+}
+
+type MIAsset { name: String  downloadUrl: String }
+
+type MIRelease {
+  tagName: String
+  name: String
+  releaseUrl: String
+  products: [String!]!
+  assets: [MIAsset!]!
+}
+
+type MIComponent {
+  id: ID!
+  name: String!
+  description: String
+  license: String
+  licenseUrl: String
+  labels: [String!]!
+  repoUrl: String
+  documentationUrl: String
+  releases: [MIRelease!]!
+}
+
+type Trigger {
+  id: ID!
+  org: String!
+  name: String!
+  connector: Connector
+  moduleName: String!
+  displayName: String!
+  version: String!
+  type: TriggerType!
+  listenerProtocol: String
+  documentation: String
+  icon: String
+  totalPullCount: Int
+  isDeprecated: Boolean!
+  updatedAt: String!
+}
+
+type Area { name: String!  connectorCount: Int! }
+type Vendor { name: String!  connectorCount: Int! }
+type ProfileCount { profile: Profile!  connectorCount: Int! }
+
+type SnapshotInfo {
+  snapshotId: String!
+  lastSyncAt: String!
+  stale: Boolean!
+  connectorCount: Int!
+  triggerCount: Int!
+}
+
+type ConnectorSearchResult {
+  count: Int!
+  connectors: [Connector!]!
+}
+
+type TriggerSearchResult {
+  count: Int!
+  triggers: [Trigger!]!
+}
+
+type FacetResult {
+  areas: [Area!]!
+  vendors: [Vendor!]!
+  profiles: [ProfileCount!]!
+}
+
+type Query {
+  searchConnectors(
+    query: String
+    area: String
+    vendor: String
+    orgs: [String!]
+    profile: Profile
+    includeDeprecated: Boolean = false
+    sort: ConnectorSort
+    limit: Int = 30
+    offset: Int = 0
+  ): ConnectorSearchResult!
+
+  getConnector(org: String!, name: String!, version: String): Connector
+
+  searchTriggers(
+    query: String
+    type: TriggerType
+    limit: Int = 30
+    offset: Int = 0
+  ): TriggerSearchResult!
+
+  facets(query: String, area: String, vendor: String, orgs: [String!]): FacetResult!
+
+  snapshot: SnapshotInfo!
+}

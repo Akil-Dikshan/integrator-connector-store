@@ -1,0 +1,13 @@
+{
+  "name": "integrator-store-e2e",
+  "version": "0.1.0",
+  "private": true,
+  "description": "End-to-end tests: fake Central, scheduler, backend GraphQL API, UI rendering",
+  "scripts": {
+    "fake-central": "node fake-central/server.js",
+    "test": "sh run.sh"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0"
+  }
+}
