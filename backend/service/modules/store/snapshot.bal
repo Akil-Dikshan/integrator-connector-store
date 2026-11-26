@@ -26,19 +26,25 @@ public type Summary record {|
     int connectorCount;
 |};
 
-# Reads the latest heartbeat row and runs one FTS5 query. Called once at start.
+# Reads the latest row and the row count from the shared database. Called once at start.
 #
-# + dbPath - path of the SQLite file the scheduler writes
-# + return - the summary, or an error if the file or tables are missing
-public function load(string dbPath) returns Summary|error {
-    jdbc:Client db = check new ("jdbc:sqlite:" + dbPath);
-    record {|int id; string written_at;|} heartbeat =
-        check db->queryRow(`SELECT id, written_at FROM heartbeat ORDER BY id DESC LIMIT 1`);
-    int matches = check db->queryRow(`SELECT count(*) FROM fts_check WHERE fts_check MATCH 'http'`);
+# + host - host name of the PostgreSQL server
+# + port - port of the PostgreSQL server
+# + database - name of the database
+# + user - user name
+# + password - password
+# + return - the summary, or an error if the connection fails or the table is missing
+public function load(string host, int port, string database, string user, string password)
+        returns Summary|error {
+    string url = string `jdbc:postgresql://${host}:${port}/${database}?sslmode=require`;
+    jdbc:Client db = check new (url, user, password);
+    record {|int id; string written_at;|} latest =
+        check db->queryRow(`SELECT id, written_at FROM connectivity_check ORDER BY id DESC LIMIT 1`);
+    int rows = check db->queryRow(`SELECT count(*) FROM connectivity_check`);
     check db.close();
     return {
-        snapshotId: heartbeat.id.toString(),
-        lastSyncAt: heartbeat.written_at,
-        connectorCount: matches
+        snapshotId: latest.id.toString(),
+        lastSyncAt: latest.written_at,
+        connectorCount: rows
     };
 }

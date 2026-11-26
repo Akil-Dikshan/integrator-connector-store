@@ -28,5 +28,17 @@ configurable decimal syncIntervalSeconds = 3600;
 # Percentage drop in package count that blocks publishing a new snapshot (placeholder).
 configurable decimal dropThresholdPercent = 5.0;
 
-# Path of the SQLite database file that holds the snapshot.
-configurable string dbPath = "../db/snapshot.sqlite";
+# Host name of the PostgreSQL server that holds the snapshot.
+configurable string dbHost = ?;
+
+# Port of the PostgreSQL server.
+configurable int dbPort = 5432;
+
+# Name of the database to use.
+configurable string dbName = ?;
+
+# User name used to connect to the database.
+configurable string dbUser = ?;
+
+# Password used to connect to the database.
+configurable string dbPassword = ?;

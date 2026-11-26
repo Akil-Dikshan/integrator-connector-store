@@ -18,7 +18,7 @@ import ballerina/graphql;
 import integrator_store_backend.store;
 
 // Snapshot summary, loaded once at startup.
-final store:Summary summary = check store:load(dbPath);
+final store:Summary summary = check store:load(dbHost, dbPort, dbName, dbUser, dbPassword);
 
 service schema on new graphql:Listener(servicePort) {
     resource function get searchConnectors(string? query, string? area, string? vendor, string[]? orgs, Profile? profile, ConnectorSort? sort, boolean? includeDeprecated = false, int? 'limit = 30, int? offset = 0) returns ConnectorSearchResult {
