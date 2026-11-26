@@ -19,23 +19,25 @@ import ballerina/time;
 import ballerinax/java.jdbc;
 
 function openDb() returns jdbc:Client|sql:Error {
-    return new ("jdbc:sqlite:" + dbPath);
+    string url = string `jdbc:postgresql://${dbHost}:${dbPort}/${dbName}?sslmode=require`;
+    return new (url, dbUser, dbPassword);
 }
 
 function createTables(jdbc:Client db) returns sql:Error? {
-    _ = check db->execute(`CREATE TABLE IF NOT EXISTS heartbeat (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+    _ = check db->execute(`CREATE TABLE IF NOT EXISTS connectivity_check (
+        id BIGSERIAL PRIMARY KEY,
         written_at TEXT NOT NULL
     )`);
-    // Full-text index over package name and description.
-    _ = check db->execute(`CREATE VIRTUAL TABLE IF NOT EXISTS fts_check USING fts5(name, description)`);
 }
 
-// Writes a heartbeat row and refreshes the sample full-text rows. Not atomic.
 function writeHeartbeat(jdbc:Client db) returns sql:Error? {
     string now = time:utcToString(time:utcNow());
-    _ = check db->execute(`INSERT INTO heartbeat (written_at) VALUES (${now})`);
-    _ = check db->execute(`DELETE FROM fts_check`);
-    _ = check db->execute(`INSERT INTO fts_check (name, description) VALUES ('ballerina/http', 'HTTP client and server')`);
-    _ = check db->execute(`INSERT INTO fts_check (name, description) VALUES ('ballerinax/kafka', 'Kafka producer and consumer')`);
+    _ = check db->execute(`INSERT INTO connectivity_check (written_at) VALUES (${now})`);
+}
+
+// Returns the number of rows and the most recent timestamp, read back from the database.
+function readHeartbeat(jdbc:Client db) returns [int, string]|sql:Error {
+    int count = check db->queryRow(`SELECT count(*) FROM connectivity_check`);
+    string latest = check db->queryRow(`SELECT written_at FROM connectivity_check ORDER BY id DESC LIMIT 1`);
+    return [count, latest];
 }

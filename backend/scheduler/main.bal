@@ -23,6 +23,7 @@ public function main() returns error? {
     var db = check openDb();
     check createTables(db);
     check writeHeartbeat(db);
+    var [count, latest] = check readHeartbeat(db);
     check db.close();
-    io:println("heartbeat written to ", dbPath);
+    io:println("heartbeat rows: ", count, ", latest: ", latest);
 }

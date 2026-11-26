@@ -16,5 +16,17 @@
 
 // Runtime configuration of the scheduler.
 
-# Path of the SQLite database file that the scheduler writes.
-configurable string dbPath = "../db/snapshot.sqlite";
+# Host name of the PostgreSQL server.
+configurable string dbHost = ?;
+
+# Port of the PostgreSQL server.
+configurable int dbPort = 5432;
+
+# Name of the database to use.
+configurable string dbName = ?;
+
+# User name used to connect to the database.
+configurable string dbUser = ?;
+
+# Password used to connect to the database.
+configurable string dbPassword = ?;
